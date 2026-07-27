@@ -10,6 +10,7 @@ public partial class GameWorld : Node3D
 
     public override void _Ready()
     {
+        AddToGroup("game_world");
         _playersRoot = GetNode<Node3D>("Players");
         SessionManager.Instance.MatchStarted += OnMatchStarted;
         SessionManager.Instance.MatchEnded += ClearPlayers;
@@ -32,6 +33,17 @@ public partial class GameWorld : Node3D
     }
 
     private void DespawnPlayer(long peerId) => _playersRoot.GetNodeOrNull(peerId.ToString())?.QueueFree();
+
+    public void SpawnForLateJoin(long joiningPeerId)
+    {
+        if (!Multiplayer.IsServer()) return;
+        foreach (var existingPeerId in SessionManager.Instance.Players.Keys)
+        {
+            if (existingPeerId != joiningPeerId)
+                RpcId(joiningPeerId, nameof(SpawnPlayer), existingPeerId, SpawnPosition(existingPeerId));
+        }
+        Rpc(nameof(SpawnPlayer), joiningPeerId, SpawnPosition(joiningPeerId));
+    }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true,
         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]

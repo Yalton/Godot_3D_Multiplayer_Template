@@ -4,3 +4,5 @@
 
 [node name="NetworkSmoke" type="Node"]
 script = ExtResource("1")
+
+[node name="MatchContainer" type="Node" parent="."]
