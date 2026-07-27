@@ -1,0 +1,12 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://addons/InputRemapManager/InputRemapManager.cs" id="1"]
+
+[node name="InputRemapManager" type="Node"]
+script = ExtResource("1")
+RebindableActionsOverride = PackedStringArray("move_forward", "move_back", "move_left", "move_right", "jump", "pause", "toggle_dev_console")
+DisplayNameOverrides = {
+"move_forward": "Move Forward",
+"move_back": "Move Backward",
+"toggle_dev_console": "Developer Console"
+}

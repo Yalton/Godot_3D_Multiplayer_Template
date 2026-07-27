@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cewp0rmkt4ddh"]
+
+[ext_resource type="Script" path="res://addons/debug_manager/DebugLogger.cs" id="1_2sngv"]
+
+[node name="DebugLogger" type="Node" unique_id=10961921]
+script = ExtResource("1_2sngv")
