@@ -35,6 +35,8 @@ a generalized match-settings framework.
 
 ## Network clock
 
+Implemented in `Scripts/Network/NetworkClock.cs`.
+
 - Synchronized server time
 - Authoritative simulation tick
 - Countdown and deadline helpers
@@ -42,6 +44,8 @@ a generalized match-settings framework.
 - Round and match timer primitives
 
 ## Connection-quality monitoring
+
+Implemented in `Scripts/Network/ConnectionQualityMonitor.cs` and the lobby UI.
 
 - Round-trip ping
 - Jitter

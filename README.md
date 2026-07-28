@@ -13,6 +13,13 @@ It runs with no third-party addons and supports:
 - Build and network-protocol compatibility rejection before registration
 - Synchronized threaded match-scene loading with peer readiness and late-join support
 - Server-authoritative first-person simulation with prediction, reconciliation, and interpolation
+- Positional push-to-talk voice chat (V), with per-player mute integration
+- Server-relayed text chat (Enter) in lobby and matches
+- Server-validated raycast interactions and grabbable objects (E)
+- Host-simulated rigid bodies with 20 Hz snapshot interpolation
+- Synchronized monotonic server clock, authoritative 60 Hz tick, deadlines, and named timers
+- Rolling ping, jitter, packet-loss, and degraded/timeout connection monitoring
+- Lobby quality indicators and an F3 network diagnostics overlay
 - Persistent audio, display, mouse sensitivity, and FOV settings
 - Runtime keyboard/mouse rebinding with conflict detection and persistence
 - Per-module debug logging with an enabled editor dock
@@ -74,6 +81,13 @@ The bundled binaries come from the pinned GodotSteam fork used by Sundering (God
 - `Main.cs` is the UI/state shell.
 - `GameWorld.cs` owns authoritative player spawn/despawn.
 - `NetworkPlayer.cs` is the replaceable example character.
+- `TextChatManager.cs` and `PositionalVoiceChat.cs` own session communication.
+- `InteractionManager.cs`, `NetworkInteractable.cs`, and `NetworkPhysicsObject.cs` are the
+  reusable world-interaction and synchronized-physics seams.
+- `NetworkClock.cs` supplies synchronized time, ticks, deadlines, scheduled callbacks, and
+  named round/match timers.
+- `ConnectionQualityMonitor.cs` derives rolling health metrics from clock probes and publishes
+  them to lobby indicators and the F3 overlay.
 
 Game RPCs treat the server as authority. The example player sends input—not transforms—and
 uses prediction/reconciliation for responsiveness. Never accept damage, inventory, scores, or

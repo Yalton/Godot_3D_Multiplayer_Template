@@ -1,5 +1,7 @@
 using Godot;
 using SettingsKit;
+using MultiplayerTemplate.Communication;
+using MultiplayerTemplate.Interaction;
 
 namespace MultiplayerTemplate.Game;
 
@@ -24,6 +26,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private uint _nextInputSequence;
     private uint _lastReceivedSequence;
     private Camera3D _camera = null!;
+    private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
 
     private readonly record struct PredictedInput(
@@ -42,15 +45,23 @@ public partial class NetworkPlayer : CharacterBody3D
 
     public override void _Ready()
     {
+        AddToGroup("network_players");
         _camera = GetNode<Camera3D>("Head/Camera3D");
         GetNode<Label3D>("NameLabel").Text = Network.SessionManager.Instance.DisplayName(PeerId);
         _camera.Current = IsLocalPlayer;
         if (IsLocalPlayer) Input.MouseMode = Input.MouseModeEnum.Captured;
         _targetPosition = GlobalPosition;
+        if (IsLocalPlayer) BuildInteractionHud();
     }
 
     public override void _UnhandledInput(InputEvent @event)
     {
+        if (IsLocalPlayer && @event.IsActionPressed("interact") && !TextChatManager.IsTyping)
+        {
+            InteractionManager.Instance.Request(InteractionTarget());
+            GetViewport().SetInputAsHandled();
+            return;
+        }
         if (!IsLocalPlayer || Input.MouseMode != Input.MouseModeEnum.Captured) return;
         if (@event is not InputEventMouseMotion motion) return;
         var sensitivity = SettingsManager.Instance.GetMouseSensitivity() / 15000f;
@@ -61,6 +72,7 @@ public partial class NetworkPlayer : CharacterBody3D
 
     public override void _PhysicsProcess(double delta)
     {
+        if (IsLocalPlayer) UpdateInteractionPrompt();
         var step = (float)delta;
         if (Multiplayer.IsServer())
         {
@@ -97,8 +109,68 @@ public partial class NetworkPlayer : CharacterBody3D
     }
 
     private (Vector2 Move, bool Jump) ReadLocalInput() =>
-        (Input.GetVector("move_left", "move_right", "move_forward", "move_back"),
-            Input.IsActionJustPressed("jump"));
+        TextChatManager.IsTyping
+            ? (Vector2.Zero, false)
+            : (Input.GetVector("move_left", "move_right", "move_forward", "move_back"),
+                Input.IsActionJustPressed("jump"));
+
+    private NodePath InteractionTarget()
+    {
+        var from = _camera.GlobalPosition;
+        var query = PhysicsRayQueryParameters3D.Create(from, from - _camera.GlobalBasis.Z * InteractionManager.Reach);
+        query.Exclude = [GetRid()];
+        var hit = GetWorld3D().DirectSpaceState.IntersectRay(query);
+        if (hit.TryGetValue("collider", out var collider) && collider.AsGodotObject() is Node3D node &&
+            node.IsInGroup("interactable"))
+            return node.GetPath();
+        return new NodePath();
+    }
+
+    private void BuildInteractionHud()
+    {
+        var layer = new CanvasLayer { Layer = 10 };
+        AddChild(layer);
+        _interactionPrompt = new Label
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        _interactionPrompt.SetAnchorsPreset(Control.LayoutPreset.Center);
+        _interactionPrompt.Position = new Vector2(-160, 70);
+        _interactionPrompt.Size = new Vector2(320, 40);
+        layer.AddChild(_interactionPrompt);
+        var crosshair = new Label { Text = "+", MouseFilter = Control.MouseFilterEnum.Ignore };
+        crosshair.SetAnchorsPreset(Control.LayoutPreset.Center);
+        crosshair.Position = new Vector2(-5, -12);
+        layer.AddChild(crosshair);
+    }
+
+    private void UpdateInteractionPrompt()
+    {
+        if (_interactionPrompt == null) return;
+        var path = InteractionTarget();
+        if (path.IsEmpty)
+        {
+            _interactionPrompt.Text = IsHoldingObject() ? "[E] Drop held object" : "";
+            return;
+        }
+        var target = GetNodeOrNull<Node>(path);
+        var prompt = target switch
+        {
+            NetworkPhysicsObject physics => physics.HeldByPeer == PeerId ? "Drop" : physics.Prompt,
+            NetworkInteractable interactable => interactable.Prompt,
+            _ => "Interact"
+        };
+        _interactionPrompt.Text = $"[E] {prompt}";
+    }
+
+    private bool IsHoldingObject()
+    {
+        foreach (var node in GetTree().GetNodesInGroup("network_physics"))
+            if (node is NetworkPhysicsObject physics && physics.HeldByPeer == PeerId) return true;
+        return false;
+    }
 
     private void ApplyMovement(Vector2 input, bool jump, float yaw, float delta)
     {

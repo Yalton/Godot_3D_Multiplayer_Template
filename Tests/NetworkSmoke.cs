@@ -13,6 +13,8 @@ public partial class NetworkSmoke : Node
     private bool _requestedReady;
     private bool _requestedStart;
     private bool _sawCompatibilityRejection;
+    private bool _clockSynchronized;
+    private bool _qualitySampled;
 
     public override void _Ready()
     {
@@ -26,6 +28,11 @@ public partial class NetworkSmoke : Node
             _sawPlaying |= current == SessionManager.SessionState.Playing;
         SessionManager.Instance.ConnectionStateChanged += (_, message) =>
             _sawCompatibilityRejection |= message.Contains("Incompatible build");
+        NetworkClock.Instance.SampleReceived += sample =>
+        {
+            _clockSynchronized |= NetworkClock.Instance.IsSynchronized;
+            _qualitySampled |= sample.RttMs >= 0;
+        };
         if (_role == "server")
         {
             SessionManager.Instance.PlayerName = "SmokeHost";
@@ -89,11 +96,13 @@ public partial class NetworkSmoke : Node
     private void FinishClient()
     {
         var loadedScene = GetTree().CurrentScene?.GetNodeOrNull("MatchContainer")?.GetChildCount() == 1;
-        var success = _sawThreePeers && _sawPlaying && loadedScene;
+        var success = _sawThreePeers && _sawPlaying && loadedScene &&
+                      _clockSynchronized && _qualitySampled;
         GD.Print(success
-            ? $"SMOKE CLIENT PASS ({_clientName}, synchronized scene)"
+            ? $"SMOKE CLIENT PASS ({_clientName}, synchronized scene and clock)"
             : $"SMOKE CLIENT FAIL name={_clientName}, roster={SessionManager.Instance.Players}, " +
-              $"three={_sawThreePeers}, playing={_sawPlaying}, loaded={loadedScene}");
+              $"three={_sawThreePeers}, playing={_sawPlaying}, loaded={loadedScene}, " +
+              $"clock={_clockSynchronized}, quality={_qualitySampled}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }

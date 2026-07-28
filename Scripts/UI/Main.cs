@@ -15,16 +15,17 @@ public partial class Main : Node
 	private Label _status = null!;
 	private VBoxContainer _roster = null!;
 	private Button _ready = null!;
-    private Button _start = null!;
-    private Button _invite = null!;
-    private OptionButton _privacy = null!;
+	private Button _start = null!;
+	private Button _invite = null!;
+	private OptionButton _privacy = null!;
 	private LineEdit _name = null!;
 	private LineEdit _address = null!;
 	private VBoxContainer _lanList = null!;
 	private VBoxContainer _steamList = null!;
 	private readonly System.Collections.Generic.List<Button> _steamButtons = new();
-    private readonly System.Collections.Generic.Dictionary<string, Button> _bindingButtons = new();
-    private readonly System.Collections.Generic.Dictionary<long, List<TextureRect>> _avatarViews = new();
+	private readonly System.Collections.Generic.Dictionary<string, Button> _bindingButtons = new();
+	private readonly System.Collections.Generic.Dictionary<long, List<TextureRect>> _avatarViews = new();
+	private readonly System.Collections.Generic.Dictionary<long, Label> _qualityLabels = new();
 	private string? _rebindingAction;
 
 	public override void _Ready()
@@ -37,8 +38,9 @@ public partial class Main : Node
 		session.MatchEnded += OnMatchEnded;
 		session.LanServersChanged += RenderLanServers;
 		session.SteamLobbiesChanged += RenderSteamLobbies;
-        session.SteamAvailabilityChanged += SetSteamAvailable;
-        PlayerIdentityService.Instance.AvatarLoaded += OnAvatarLoaded;
+		session.SteamAvailabilityChanged += SetSteamAvailable;
+		PlayerIdentityService.Instance.AvatarLoaded += OnAvatarLoaded;
+		ConnectionQualityMonitor.Instance.QualityChanged += OnQualityChanged;
 		SetSteamAvailable(session.Steam.Available);
 		OnStateChanged("menu", "Ready.");
 	}
@@ -92,23 +94,23 @@ public partial class Main : Node
 		_lobby.Visible = false;
 		canvas.AddChild(_lobby);
 		var lobby = lobbyPanel.GetNode<VBoxContainer>("Margin/VBox");
-        _roster = new VBoxContainer();
-        lobby.AddChild(_roster);
-        var steamSocial = new HBoxContainer();
-        _invite = Button("Invite Steam Friends", SessionManager.Instance.Steam.OpenInviteDialog);
-        steamSocial.AddChild(_invite);
-        _privacy = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        _privacy.AddItem("Public");
-        _privacy.AddItem("Friends Only");
-        _privacy.AddItem("Private / Invite Only");
-        _privacy.ItemSelected += index => SessionManager.Instance.Steam.SetPrivacy(index switch
-        {
-            1 => SteamTransport.LobbyPrivacy.FriendsOnly,
-            2 => SteamTransport.LobbyPrivacy.Private,
-            _ => SteamTransport.LobbyPrivacy.Public
-        });
-        steamSocial.AddChild(_privacy);
-        lobby.AddChild(steamSocial);
+		_roster = new VBoxContainer();
+		lobby.AddChild(_roster);
+		var steamSocial = new HBoxContainer();
+		_invite = Button("Invite Steam Friends", SessionManager.Instance.Steam.OpenInviteDialog);
+		steamSocial.AddChild(_invite);
+		_privacy = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		_privacy.AddItem("Public");
+		_privacy.AddItem("Friends Only");
+		_privacy.AddItem("Private / Invite Only");
+		_privacy.ItemSelected += index => SessionManager.Instance.Steam.SetPrivacy(index switch
+		{
+			1 => SteamTransport.LobbyPrivacy.FriendsOnly,
+			2 => SteamTransport.LobbyPrivacy.Private,
+			_ => SteamTransport.LobbyPrivacy.Public
+		});
+		steamSocial.AddChild(_privacy);
+		lobby.AddChild(steamSocial);
 		_ready = Button("Ready", ToggleReady);
 		lobby.AddChild(_ready);
 		_start = Button("Start Match", SessionManager.Instance.StartMatch);
@@ -330,77 +332,106 @@ public partial class Main : Node
 		}
 	}
 
-    private void RenderRoster(PlayerRoster players)
-    {
-        foreach (var child in _roster.GetChildren()) child.QueueFree();
-        _avatarViews.Clear();
-        var ownId = Multiplayer.HasMultiplayerPeer() ? Multiplayer.GetUniqueId() : 0;
-        foreach (var (peerId, data) in players)
-        {
-            var identity = PlayerIdentity.FromDictionary(peerId, data);
-            var row = new HBoxContainer();
-            var avatar = new TextureRect
-            {
-                CustomMinimumSize = new Vector2(36, 36),
-                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered
-            };
-            row.AddChild(avatar);
-            var host = identity.IsHost ? " ★ HOST" : "";
-            var ready = identity.Ready ? "READY" : "NOT READY";
-            row.AddChild(new Label
-            {
-                Text = $"{identity.DisplayName}{host}    {ready}    [{identity.Platform}]",
-                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
-            });
-            if (peerId != ownId)
-            {
-                var muted = PlayerIdentityService.Instance.IsMuted(identity);
-                row.AddChild(Button(muted ? "Unmute" : "Mute", () =>
-                {
-                    PlayerIdentityService.Instance.SetMuted(
-                        identity, !PlayerIdentityService.Instance.IsMuted(identity));
-                    RenderRoster(SessionManager.Instance.Players);
-                }));
-            }
-            _roster.AddChild(row);
-            if (!identity.HasSteamIdentity) continue;
-            if (!_avatarViews.TryGetValue(identity.SteamId, out var views))
-                _avatarViews[identity.SteamId] = views = new List<TextureRect>();
-            views.Add(avatar);
-            if (PlayerIdentityService.Instance.TryGetAvatar(identity.SteamId, out var cached))
-                avatar.Texture = cached;
-            else
-                PlayerIdentityService.Instance.RequestAvatar(identity.SteamId);
-        }
+	private void RenderRoster(PlayerRoster players)
+	{
+		foreach (var child in _roster.GetChildren()) child.QueueFree();
+		_avatarViews.Clear();
+		_qualityLabels.Clear();
+		var ownId = Multiplayer.HasMultiplayerPeer() ? Multiplayer.GetUniqueId() : 0;
+		foreach (var (peerId, data) in players)
+		{
+			var identity = PlayerIdentity.FromDictionary(peerId, data);
+			var row = new HBoxContainer();
+			var avatar = new TextureRect
+			{
+				CustomMinimumSize = new Vector2(36, 36),
+				ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+				StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered
+			};
+			row.AddChild(avatar);
+			var host = identity.IsHost ? " ★ HOST" : "";
+			var ready = identity.Ready ? "READY" : "NOT READY";
+			row.AddChild(new Label
+			{
+				Text = $"{identity.DisplayName}{host}    {ready}    [{identity.Platform}]",
+				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+			});
+			var quality = new Label
+			{
+				Text = QualityText(peerId),
+				TooltipText = "Round-trip latency and rolling packet-loss estimate",
+				CustomMinimumSize = new Vector2(110, 0),
+				HorizontalAlignment = HorizontalAlignment.Right
+			};
+			_qualityLabels[peerId] = quality;
+			row.AddChild(quality);
+			if (peerId != ownId)
+			{
+				var muted = PlayerIdentityService.Instance.IsMuted(identity);
+				row.AddChild(Button(muted ? "Unmute" : "Mute", () =>
+				{
+					PlayerIdentityService.Instance.SetMuted(
+						identity, !PlayerIdentityService.Instance.IsMuted(identity));
+					RenderRoster(SessionManager.Instance.Players);
+				}));
+			}
+			_roster.AddChild(row);
+			if (!identity.HasSteamIdentity) continue;
+			if (!_avatarViews.TryGetValue(identity.SteamId, out var views))
+				_avatarViews[identity.SteamId] = views = new List<TextureRect>();
+			views.Add(avatar);
+			if (PlayerIdentityService.Instance.TryGetAvatar(identity.SteamId, out var cached))
+				avatar.Texture = cached;
+			else
+				PlayerIdentityService.Instance.RequestAvatar(identity.SteamId);
+		}
 		var ownReady = players.TryGetValue(ownId, out var own)
 					   && own.GetValueOrDefault("ready", false).AsBool();
 		_ready.Text = ownReady ? "Unready" : "Ready";
-        _start.Visible = Multiplayer.HasMultiplayerPeer() && Multiplayer.IsServer();
-        UpdateSteamSocialControls();
-    }
+		_start.Visible = Multiplayer.HasMultiplayerPeer() && Multiplayer.IsServer();
+		UpdateSteamSocialControls();
+	}
 
-    private void OnAvatarLoaded(long steamId, ImageTexture texture)
-    {
-        if (!_avatarViews.TryGetValue(steamId, out var views)) return;
-        foreach (var view in views)
-            if (GodotObject.IsInstanceValid(view)) view.Texture = texture;
-    }
+	private void OnQualityChanged(long peerId, ConnectionQuality quality)
+	{
+		if (_qualityLabels.TryGetValue(peerId, out var label) && GodotObject.IsInstanceValid(label))
+			label.Text = QualityText(peerId);
+	}
 
-    private void UpdateSteamSocialControls()
-    {
-        var session = SessionManager.Instance;
-        var steamSession = session.Transport == SessionManager.TransportKind.Steam &&
-                           session.Steam.ActiveLobbyId != 0;
-        _invite.Visible = steamSession;
-        _privacy.Visible = steamSession && Multiplayer.IsServer();
-        _privacy.Selected = session.Steam.Privacy switch
-        {
-            SteamTransport.LobbyPrivacy.FriendsOnly => 1,
-            SteamTransport.LobbyPrivacy.Private => 2,
-            _ => 0
-        };
-    }
+	private static string QualityText(long peerId)
+	{
+		var quality = ConnectionQualityMonitor.Instance.ForPeer(peerId);
+		var icon = quality.Health switch
+		{
+			ConnectionHealth.Excellent => "●",
+			ConnectionHealth.Good => "●",
+			ConnectionHealth.Degraded => "▲",
+			_ => "×"
+		};
+		return $"{icon} {quality.ShortText}";
+	}
+
+	private void OnAvatarLoaded(long steamId, ImageTexture texture)
+	{
+		if (!_avatarViews.TryGetValue(steamId, out var views)) return;
+		foreach (var view in views)
+			if (GodotObject.IsInstanceValid(view)) view.Texture = texture;
+	}
+
+	private void UpdateSteamSocialControls()
+	{
+		var session = SessionManager.Instance;
+		var steamSession = session.Transport == SessionManager.TransportKind.Steam &&
+						   session.Steam.ActiveLobbyId != 0;
+		_invite.Visible = steamSession;
+		_privacy.Visible = steamSession && Multiplayer.IsServer();
+		_privacy.Selected = session.Steam.Privacy switch
+		{
+			SteamTransport.LobbyPrivacy.FriendsOnly => 1,
+			SteamTransport.LobbyPrivacy.Private => 2,
+			_ => 0
+		};
+	}
 
 	private void RenderLanServers(Array<Dictionary> servers)
 	{

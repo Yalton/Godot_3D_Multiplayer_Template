@@ -19,6 +19,7 @@ public partial class TemplateCommands : BaseCommandHandler
         RegisterCommand("host_lan", HostLan, "Hosts an ENet session. Usage: host_lan [port]");
         RegisterCommand("join_ip", JoinIp, "Joins an ENet host. Usage: join_ip <address> [port]");
         RegisterCommand("disconnect", Disconnect, "Disconnects the current multiplayer session.");
+        RegisterCommand("net_clock", NetClock, "Shows synchronized time, server tick, ping, jitter, and loss.");
     }
 
     private void NetStatus(string[] args)
@@ -44,6 +45,20 @@ public partial class TemplateCommands : BaseCommandHandler
         foreach (var (id, data) in SessionManager.Instance.Players)
             Output($"{id}: {data.GetValueOrDefault("name", "Player").AsString()} " +
                    $"[{(data.GetValueOrDefault("ready", false).AsBool() ? "ready" : "not ready")}]");
+    }
+
+    private void NetClock(string[] args)
+    {
+        var clock = NetworkClock.Instance;
+        var quality = ConnectionQualityMonitor.Instance.LocalQuality;
+        OutputSystem("=== Network Clock & Quality ===");
+        Output($"Synchronized: {clock.IsSynchronized}");
+        Output($"Server time: {clock.ServerTimeSeconds:F3}s");
+        Output($"Authoritative tick: {clock.AuthoritativeTick} @ {NetworkClock.TickRate} Hz");
+        Output($"Ping: {quality.PingMs:F1} ms");
+        Output($"Jitter: {quality.JitterMs:F1} ms");
+        Output($"Packet loss: {quality.PacketLossPercent:F1}%");
+        Output($"Health: {quality.Health}");
     }
 
     private void HostLan(string[] args)
