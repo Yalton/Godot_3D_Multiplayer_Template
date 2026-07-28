@@ -2,5 +2,6 @@
 .mono/
 bin/
 obj/
+TestResults/
 *.user
 steam_appid.txt

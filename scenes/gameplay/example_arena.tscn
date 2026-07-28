@@ -45,8 +45,6 @@ shape = SubResource("FloorShape")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Floor"]
 mesh = SubResource("FloorMesh")
 
-[node name="Players" type="Node3D" parent="."]
-
 [node name="PhysicsProps" type="Node3D" parent="."]
 
 [node name="CrateA" type="RigidBody3D" parent="PhysicsProps"]
@@ -83,6 +81,7 @@ collision_layer = 4
 collision_mask = 0
 script = ExtResource("3")
 Prompt = "Toggle switch"
+Visual = NodePath("MeshInstance3D")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="ExampleSwitch"]
 shape = SubResource("SwitchShape")

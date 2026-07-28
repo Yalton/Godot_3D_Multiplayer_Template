@@ -25,7 +25,9 @@ It runs with no third-party addons and supports:
 - Per-module debug logging with an enabled editor dock
 - In-game developer console with multiplayer diagnostics and session commands
 - Pause/disconnect flow and host-disconnect recovery
-- Command-line dedicated hosting
+- Headless-safe dedicated hosting with config/argument overrides
+- Reusable sender, state, distance, line-of-sight, cooldown, and RPC rate-limit helpers
+- Centralized gameplay-input suppression for menus, chat, rebinding, and the developer console
 
 ## Quick start
 
@@ -37,16 +39,21 @@ be allowed through the firewall.
 Useful command-line modes:
 
 ```bash
-godot --path . --server --port=8910 --name="Dedicated Server"
+godot --headless --path . --server --port=8910 --server-name="Dedicated Server"
 godot --path . --join=127.0.0.1 --name="Player Two"
 ```
 
-Run the four-process multiplayer harness (host, two clients, and one deliberately incompatible
-client) with:
+Copy `server.cfg.example` to `server.cfg` for dedicated-server name and player-limit defaults.
+Command-line values such as `--server-name`, `--max-players`, and `--port` override them.
+
+Run the complete xUnit, coverage, and multiplayer integration suite with:
 
 ```bash
-bash Tests/run_multiplayer_smoke.sh
+bash Tests/run_all_tests.sh
 ```
+
+See [docs/TESTING.md](docs/TESTING.md) for individual commands, coverage interpretation, and
+the scenarios under test.
 
 ## Steam setup
 
@@ -88,6 +95,8 @@ The bundled binaries come from the pinned GodotSteam fork used by Sundering (God
   named round/match timers.
 - `ConnectionQualityMonitor.cs` derives rolling health metrics from clock probes and publishes
   them to lobby indicators and the F3 overlay.
+- `RpcSecurity.cs` provides composable validation, per-peer rate limiting, and cooldowns.
+- `LocalInputContext.cs` owns local gameplay-input and mouse-capture policy.
 
 Game RPCs treat the server as authority. The example player sends input—not transforms—and
 uses prediction/reconciliation for responsiveness. Never accept damage, inventory, scores, or
@@ -95,3 +104,10 @@ other outcomes directly from clients; accept intent, validate it on the server, 
 the result.
 
 See [docs/EXTENDING.md](docs/EXTENDING.md) for the replacement seams and shipping checklist.
+
+## Core scope
+
+The generic multiplayer foundation is feature-complete. Reconnect/slot reclamation, host
+migration, generalized game-mode settings, progression profiles, Workshop integration,
+achievements, cloud saves, and replay systems are deliberately extension points because their
+correct behavior depends on the game and deployment model.

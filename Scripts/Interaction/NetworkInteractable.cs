@@ -6,6 +6,7 @@ namespace MultiplayerTemplate.Interaction;
 public partial class NetworkInteractable : StaticBody3D
 {
     [Export] public string Prompt { get; set; } = "Use";
+    [Export] public MeshInstance3D? Visual { get; set; }
     public bool Active { get; private set; }
 
     public override void _Ready() => AddToGroup("interactable");
@@ -26,7 +27,7 @@ public partial class NetworkInteractable : StaticBody3D
 
     protected virtual void ApplyState(bool active)
     {
-        if (GetNodeOrNull<MeshInstance3D>("MeshInstance3D") is { } mesh)
+        if (Visual is { } mesh)
         {
             var material = new StandardMaterial3D
             {

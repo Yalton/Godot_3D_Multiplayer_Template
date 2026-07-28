@@ -1,0 +1,7 @@
+[server]
+
+name="My Dedicated Server"
+max_players=8
+
+# Port remains a command-line setting so multiple instances can share one config:
+# godot --headless --path . --server --port=8910 --config=res://server.cfg

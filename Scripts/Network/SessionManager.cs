@@ -8,6 +8,7 @@ namespace MultiplayerTemplate.Network;
 public partial class SessionManager : Node
 {
     private const string LogModule = "Session";
+    private readonly RpcRateLimiter _requestLimiter = new();
     public static SessionManager Instance { get; private set; } = null!;
 
     public event Action<string, string>? ConnectionStateChanged;
@@ -29,6 +30,7 @@ public partial class SessionManager : Node
     public string ServerName { get; set; } = "LAN Game";
     public int MaxPlayers { get; set; } = 8;
     public bool MatchActive { get; private set; }
+    public bool IsDedicatedServer { get; private set; }
     public SessionState State { get; private set; } = SessionState.Offline;
     // Test harness seam. Production callers should leave this at zero.
     public int ProtocolVersionOverrideForTesting { get; set; }
@@ -39,6 +41,7 @@ public partial class SessionManager : Node
     {
         Instance = this;
         DebugLogger.Instance.RegisterModule(LogModule, true);
+        DebugLogger.Instance.RegisterModule("RpcSecurity", true);
         Enet = new EnetTransport();
         AddChild(Enet);
         Steam = new SteamTransport();
@@ -222,8 +225,13 @@ public partial class SessionManager : Node
         string requestedName, long steamId, string identityPlatform, string gameVersion,
         int protocolVersion, string buildId, string platform)
     {
-        if (!Multiplayer.IsServer()) return;
+        if (!RpcSecurity.RequireServer(this, nameof(RegisterPlayer))) return;
         var sender = Multiplayer.GetRemoteSenderId();
+        if (!_requestLimiter.Allow(sender, nameof(RegisterPlayer), 2, 5000))
+        {
+            RpcSecurity.Reject(nameof(RegisterPlayer), sender, "rate limit exceeded");
+            return;
+        }
         if (protocolVersion != NetworkBuildInfo.ProtocolVersion || gameVersion != NetworkBuildInfo.GameVersion)
         {
             var reason = $"Incompatible build. Host requires {NetworkBuildInfo.BuildId}; " +
@@ -274,7 +282,15 @@ public partial class SessionManager : Node
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void RequestReady(bool ready)
     {
-        if (Multiplayer.IsServer()) SetReadyServer(Multiplayer.GetRemoteSenderId(), ready);
+        if (!RpcSecurity.RequireServer(this, nameof(RequestReady)) ||
+            !RpcSecurity.RequireKnownSender(this, nameof(RequestReady), out var sender) ||
+            !RpcSecurity.RequireState(State, nameof(RequestReady), SessionState.Lobby)) return;
+        if (!_requestLimiter.Allow(sender, nameof(RequestReady), 6, 2000))
+        {
+            RpcSecurity.Reject(nameof(RequestReady), sender, "rate limit exceeded");
+            return;
+        }
+        SetReadyServer(sender, ready);
     }
 
     private void SetReadyServer(long peerId, bool ready)
@@ -331,6 +347,9 @@ public partial class SessionManager : Node
     private void ParseCommandLine()
     {
         var args = OS.GetCmdlineUserArgs();
+        IsDedicatedServer = DisplayServer.GetName() == "headless" &&
+                            args.Contains("--server");
+        LoadServerConfiguration(args);
         foreach (var arg in args)
             if (arg.StartsWith("--name=")) PlayerName = arg["--name=".Length..][..Math.Min(24, arg.Length - "--name=".Length)];
         foreach (var arg in args)
@@ -339,6 +358,35 @@ public partial class SessionManager : Node
             else if (arg.StartsWith("--join="))
                 CallDeferred(nameof(JoinEnet), arg["--join=".Length..], ArgumentInt(args, "--port=", DefaultPort));
         }
+    }
+
+    private void LoadServerConfiguration(string[] args)
+    {
+        var requestedPath = args.FirstOrDefault(arg => arg.StartsWith("--config="));
+        var path = requestedPath == null ? "res://server.cfg" : requestedPath["--config=".Length..];
+        var config = new ConfigFile();
+        if (config.Load(path) == Error.Ok)
+        {
+            ServerName = config.GetValue("server", "name", ServerName).AsString();
+            MaxPlayers = Math.Clamp(config.GetValue("server", "max_players", MaxPlayers).AsInt32(), 1, 64);
+        }
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith("--server-name=")) ServerName = arg["--server-name=".Length..];
+            if (arg.StartsWith("--max-players=") &&
+                int.TryParse(arg["--max-players=".Length..], out var maximum))
+                MaxPlayers = Math.Clamp(maximum, 1, 64);
+        }
+        if (IsDedicatedServer)
+            DebugLogger.Instance.Info(LogModule,
+                $"Dedicated server configuration: name='{ServerName}', max={MaxPlayers}");
+    }
+
+    public override void _Notification(int what)
+    {
+        if (what != NotificationWMCloseRequest) return;
+        DisconnectSession(false);
+        GetTree().Quit();
     }
 
     private static int ArgumentInt(string[] args, string prefix, int fallback)

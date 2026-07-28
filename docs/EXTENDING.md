@@ -11,8 +11,9 @@ surface is:
 - `RosterChanged`, `MatchStarted`, and `ConnectionStateChanged`
 - `StateChanged` and the `Offline → Connecting → Lobby → Loading → Playing` lifecycle
 
-The server is always multiplayer peer `1`. Player nodes are named by peer ID and receive
-server authority before `_ready`; `PeerId` identifies which client may submit input.
+The server is always multiplayer peer `1`. `GameWorld` tracks players by peer ID in a typed
+dictionary; node names are not an identity contract. `PeerId` identifies which client may
+submit input.
 
 ## Load a match scene
 
@@ -37,12 +38,28 @@ host rejects incompatible builds with a readable reason.
 Use this pattern:
 
 1. A client sends an intent RPC with `[Rpc(MultiplayerApi.RpcMode.AnyPeer)]`.
-2. The server reads `multiplayer.get_remote_sender_id()`.
-3. The server validates ownership, cooldown, distance, and current match phase.
+2. The server derives identity from `Multiplayer.GetRemoteSenderId()`.
+3. The server validates ownership, cooldown, distance, and current match phase with
+   `RpcSecurity`, `RpcRateLimiter`, and `RpcCooldowns`.
 4. The server mutates canonical state.
 5. The server broadcasts the resulting state.
 
 Do not trust a peer ID included in client payloads. Derive identity from the RPC sender.
+
+For local controls, use `LocalInputContext.Instance.GameplaySuppressed` instead of checking
+individual menus. Register modal UI with `SetBlocked(owner, true)` while it is open and clear
+the same owner when it closes.
+
+## Dedicated servers
+
+Start ENet hosting without client UI or audio capture:
+
+```bash
+godot --headless --path . --server --port=8910 --config=res://server.cfg
+```
+
+Copy `server.cfg.example` to `server.cfg`. Command-line `--server-name`,
+`--max-players`, and `--port` values override config defaults.
 
 ## Shipping checklist
 
@@ -59,5 +76,10 @@ Do not trust a peer ID included in client payloads. Derive identity from the RPC
 ## Automated multiplayer harness
 
 `Tests/NetworkSmoke.cs` covers one host, two valid clients, one incompatible client, ready-up,
-synchronized map loading, transition to `Playing`, and clean disconnects. It is designed to be
-launched as separate Godot processes; see the commands in the project README.
+synchronized map loading, transition to `Playing`, clock sync, security primitives, host-loss
+recovery, and headless client-service suppression. It is designed to be launched as separate
+Godot processes; see the command in the project README.
+
+Pure policies are covered by the xUnit project in `MultiplayerTemplate.Tests`, with Coverlet
+Cobertura/JSON reports. Run both test layers through `bash Tests/run_all_tests.sh`; details are
+in `docs/TESTING.md`.

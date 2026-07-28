@@ -1,6 +1,7 @@
 using Godot;
 using MultiplayerTemplate.Game;
 using MultiplayerTemplate.Network;
+using MultiplayerTemplate.UI;
 
 namespace MultiplayerTemplate.Communication;
 
@@ -11,14 +12,25 @@ namespace MultiplayerTemplate.Communication;
 /// </summary>
 public partial class PositionalVoiceChat : Node
 {
+    public static PositionalVoiceChat Instance { get; private set; } = null!;
+    public bool ClientCaptureEnabled => _captureAvailable;
     private const int CaptureFrames = 960;
     private const int PlaybackRate = 16000;
     private AudioEffectCapture? _capture;
     private AudioStreamPlayer? _micPump;
     private readonly System.Collections.Generic.Dictionary<long, AudioStreamPlayer3D> _speakers = new();
+    private readonly RpcRateLimiter _rateLimiter = new();
+    private bool _captureAvailable;
 
     public override void _Ready()
     {
+        Instance = this;
+        if (DisplayServer.GetName() == "headless")
+        {
+            ProcessMode = ProcessModeEnum.Disabled;
+            return;
+        }
+        _captureAvailable = true;
         AudioServer.InputDevice = "Default";
         var bus = AudioServer.BusCount;
         AudioServer.AddBus(bus);
@@ -39,7 +51,8 @@ public partial class PositionalVoiceChat : Node
     public override void _Process(double delta)
     {
         UpdateSpeakerPositions();
-        if (!Multiplayer.HasMultiplayerPeer() || !SessionManager.Instance.MatchActive ||
+        if (!_captureAvailable || !Multiplayer.HasMultiplayerPeer() || !SessionManager.Instance.MatchActive ||
+            LocalInputContext.Instance.GameplaySuppressed ||
             !Input.IsActionPressed("push_to_talk") || _capture == null) return;
         while (_capture.CanGetBuffer(CaptureFrames))
         {
@@ -62,8 +75,16 @@ public partial class PositionalVoiceChat : Node
         TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 2)]
     private void SubmitVoice(byte[] pcm)
     {
-        if (!Multiplayer.IsServer() || pcm.Length > 2048) return;
-        RelayVoice(Multiplayer.GetRemoteSenderId(), pcm);
+        if (!RpcSecurity.RequireServer(this, nameof(SubmitVoice)) ||
+            !RpcSecurity.RequireKnownSender(this, nameof(SubmitVoice), out var sender) ||
+            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(SubmitVoice),
+                SessionManager.SessionState.Playing) || pcm.Length > 2048) return;
+        if (!_rateLimiter.Allow(sender, nameof(SubmitVoice), 60, 1000))
+        {
+            RpcSecurity.Reject(nameof(SubmitVoice), sender, "rate limit exceeded");
+            return;
+        }
+        RelayVoice(sender, pcm);
     }
 
     private void RelayVoice(long peerId, byte[] pcm)

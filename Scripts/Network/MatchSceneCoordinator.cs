@@ -15,12 +15,20 @@ public partial class MatchSceneCoordinator : Node
     private string _activeScenePath = "";
     private int _loadGeneration;
     private Node? _activeScene;
+    private Node? _matchContainer;
+
+    public int LoadedSceneCount => _matchContainer?.GetChildCount() ?? 0;
 
     public override void _Ready()
     {
         Instance = this;
         DebugLogger.Instance.RegisterModule(LogModule, true);
+        Multiplayer.PeerDisconnected += OnPeerDisconnected;
     }
+
+    public override void _ExitTree() => Multiplayer.PeerDisconnected -= OnPeerDisconnected;
+
+    public void SetMatchContainer(Node matchContainer) => _matchContainer = matchContainer;
 
     public void BeginMatchLoad(string scenePath = DefaultMatchScene)
     {
@@ -85,13 +93,12 @@ public partial class MatchSceneCoordinator : Node
 
         var packed = ResourceLoader.LoadThreadedGet(scenePath) as PackedScene;
         _activeScene = packed?.Instantiate();
-        var root = GetTree().CurrentScene?.GetNodeOrNull<Node>("MatchContainer");
-        if (_activeScene == null || root == null)
+        if (_activeScene == null || _matchContainer == null)
         {
             GD.PushError("Loaded match scene or MatchContainer is missing.");
             return;
         }
-        root.AddChild(_activeScene);
+        _matchContainer.AddChild(_activeScene);
         if (Multiplayer.IsServer()) MarkPeerLoaded(Multiplayer.GetUniqueId(), generation);
         else RpcId(1, nameof(ReportSceneLoaded), generation);
     }
@@ -100,8 +107,12 @@ public partial class MatchSceneCoordinator : Node
         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void ReportSceneLoaded(int generation)
     {
-        if (!Multiplayer.IsServer() || generation != _loadGeneration) return;
-        MarkPeerLoaded(Multiplayer.GetRemoteSenderId(), generation);
+        if (!RpcSecurity.RequireServer(this, nameof(ReportSceneLoaded)) ||
+            !RpcSecurity.RequireKnownSender(this, nameof(ReportSceneLoaded), out var sender) ||
+            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(ReportSceneLoaded),
+                SessionManager.SessionState.Loading, SessionManager.SessionState.Playing) ||
+            generation != _loadGeneration) return;
+        MarkPeerLoaded(sender, generation);
     }
 
     private void MarkPeerLoaded(long peerId, int generation)
@@ -120,6 +131,19 @@ public partial class MatchSceneCoordinator : Node
             RpcId(peerId, nameof(ActivateMatch), generation);
             var world = GetTree().GetFirstNodeInGroup("game_world") as GameWorld;
             world?.SpawnForLateJoin(peerId);
+        }
+    }
+
+    private void OnPeerDisconnected(long peerId)
+    {
+        if (!Multiplayer.IsServer() || !_waitingFor.Remove(peerId)) return;
+        DebugLogger.Instance.Info(LogModule,
+            $"Peer {peerId} disconnected during load; {_waitingFor.Count} remaining");
+        if (_waitingFor.Count == 0 &&
+            SessionManager.Instance.State == SessionManager.SessionState.Loading)
+        {
+            Rpc(nameof(ActivateMatch), _loadGeneration);
+            SessionManager.Instance.SetStateServer(SessionManager.SessionState.Playing);
         }
     }
 

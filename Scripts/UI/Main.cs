@@ -30,6 +30,7 @@ public partial class Main : Node
 
 	public override void _Ready()
 	{
+		if (DisplayServer.GetName() == "headless") return;
 		BuildUi();
 		var session = SessionManager.Instance;
 		session.ConnectionStateChanged += OnStateChanged;
@@ -51,7 +52,7 @@ public partial class Main : Node
 		if (!@event.IsActionPressed("pause") || !SessionManager.Instance.MatchActive) return;
 		var wasVisible = _lobby.Visible;
 		_lobby.Visible = !wasVisible;
-		Input.MouseMode = wasVisible ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
+		LocalInputContext.Instance.SetBlocked("pause_menu", !wasVisible);
 		GetViewport().SetInputAsHandled();
 	}
 
@@ -59,10 +60,9 @@ public partial class Main : Node
 	{
 		var canvas = new CanvasLayer();
 		AddChild(canvas);
-		var menuPanel = Panel("3D MULTIPLAYER TEMPLATE");
+		var (menuPanel, menu) = Panel("3D MULTIPLAYER TEMPLATE");
 		_menu = WrapScreen(menuPanel);
 		canvas.AddChild(_menu);
-		var menu = menuPanel.GetNode<VBoxContainer>("Margin/VBox");
 		_name = LineEdit("Display name", SessionManager.Instance.PlayerName);
 		menu.AddChild(_name);
 		menu.AddChild(Button("Host LAN / Direct IP", HostLan));
@@ -84,16 +84,15 @@ public partial class Main : Node
 		menu.AddChild(steamRefresh);
 		_steamList = new VBoxContainer();
 		menu.AddChild(_steamList);
-		menu.AddChild(Button("Options", () => _options.Visible = true));
+		menu.AddChild(Button("Options", () => ShowOptions(true)));
 		menu.AddChild(Button("Quit", () => GetTree().Quit()));
 		_status = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
 		menu.AddChild(_status);
 
-		var lobbyPanel = Panel("LOBBY");
+		var (lobbyPanel, lobby) = Panel("LOBBY");
 		_lobby = WrapScreen(lobbyPanel);
 		_lobby.Visible = false;
 		canvas.AddChild(_lobby);
-		var lobby = lobbyPanel.GetNode<VBoxContainer>("Margin/VBox");
 		_roster = new VBoxContainer();
 		lobby.AddChild(_roster);
 		var steamSocial = new HBoxContainer();
@@ -115,20 +114,23 @@ public partial class Main : Node
 		lobby.AddChild(_ready);
 		_start = Button("Start Match", SessionManager.Instance.StartMatch);
 		lobby.AddChild(_start);
-		lobby.AddChild(Button("Options", () => _options.Visible = true));
+		lobby.AddChild(Button("Options", () => ShowOptions(true)));
 		lobby.AddChild(Button("Disconnect", () => SessionManager.Instance.DisconnectSession()));
 
 		_options = BuildOptions();
 		_options.Visible = false;
 		canvas.AddChild(_options);
+		var tools = new CanvasLayer { Layer = 100 };
+		AddChild(tools);
+		var consoleScene = ResourceLoader.Load<PackedScene>("res://addons/dev_console/DevConsole.tscn");
+		tools.AddChild(consoleScene.Instantiate());
 	}
 
 	private Control BuildOptions()
 	{
-		var panel = Panel("OPTIONS");
+		var (panel, box) = Panel("OPTIONS");
 		panel.CustomMinimumSize = new Vector2(620, 520);
 		var screen = WrapScreen(panel);
-		var box = panel.GetNode<VBoxContainer>("Margin/VBox");
 		var tabs = new TabContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
 		box.AddChild(tabs);
 
@@ -180,8 +182,14 @@ public partial class Main : Node
 			InputRemapManager.Instance.ResetAllActions();
 			RefreshBindings();
 		}));
-		box.AddChild(Button("Back", () => screen.Visible = false));
+		box.AddChild(Button("Back", () => ShowOptions(false)));
 		return screen;
+	}
+
+	private void ShowOptions(bool visible)
+	{
+		_options.Visible = visible;
+		LocalInputContext.Instance.SetBlocked("options", visible);
 	}
 
 	private void BeginRebind(string action)
@@ -226,7 +234,7 @@ public partial class Main : Node
 		foreach (var (action, button) in _bindingButtons) button.Text = BindingText(action);
 	}
 
-	private static PanelContainer Panel(string title)
+	private static (PanelContainer Panel, VBoxContainer Content) Panel(string title)
 	{
 		var panel = new PanelContainer { CustomMinimumSize = new Vector2(480, 0) };
 		var margin = new MarginContainer { Name = "Margin" };
@@ -239,7 +247,7 @@ public partial class Main : Node
 		var heading = new Label { Text = title, HorizontalAlignment = HorizontalAlignment.Center };
 		heading.AddThemeFontSizeOverride("font_size", 28);
 		box.AddChild(heading);
-		return panel;
+		return (panel, box);
 	}
 
 	private static MarginContainer WrapScreen(Control content)
@@ -321,13 +329,13 @@ public partial class Main : Node
 		{
 			_menu.Visible = true;
 			_lobby.Visible = false;
-			Input.MouseMode = Input.MouseModeEnum.Visible;
+			LocalInputContext.Instance.SetBlocked("session_ui", true);
 		}
 		else if (state == "lobby")
 		{
 			_menu.Visible = false;
 			_lobby.Visible = true;
-			Input.MouseMode = Input.MouseModeEnum.Visible;
+			LocalInputContext.Instance.SetBlocked("session_ui", true);
 			RenderRoster(SessionManager.Instance.Players);
 		}
 	}
@@ -478,10 +486,12 @@ public partial class Main : Node
 		_menu.Visible = false;
 		_lobby.Visible = false;
 		_options.Visible = false;
+		LocalInputContext.Instance.Clear();
 	}
 
 	private void OnMatchEnded()
 	{
 		if (Multiplayer.HasMultiplayerPeer()) _lobby.Visible = true;
+		LocalInputContext.Instance.SetBlocked("session_ui", true);
 	}
 }

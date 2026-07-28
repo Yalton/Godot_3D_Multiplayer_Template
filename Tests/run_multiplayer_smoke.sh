@@ -42,6 +42,26 @@ grep -h "SMOKE" "$log_dir"/*.log || true
 if grep -E "ERROR:|SMOKE .* FAIL" "$log_dir"/*.log; then result=1; fi
 
 if (( result == 0 )); then
+  loss_dir="$(mktemp -d)"
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=host-loss-server >"$loss_dir/server.log" 2>&1 &
+  loss_server=$!
+  sleep 0.3
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=host-loss-client >"$loss_dir/client.log" 2>&1 &
+  loss_client=$!
+  wait "$loss_server" || result=1
+  wait "$loss_client" || result=1
+  grep -h "SMOKE" "$loss_dir"/*.log || true
+  if grep -E "ERROR:|SMOKE .* FAIL" "$loss_dir"/*.log; then result=1; fi
+
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --server --port=18912 --smoke-role=dedicated >"$loss_dir/dedicated.log" 2>&1 || result=1
+  grep -h "SMOKE" "$loss_dir/dedicated.log" || true
+  if grep -E "ERROR:|SMOKE .* FAIL" "$loss_dir/dedicated.log"; then result=1; fi
+fi
+
+if (( result == 0 )); then
   echo "MULTIPLAYER HARNESS PASS"
 else
   echo "MULTIPLAYER HARNESS FAIL — logs retained at $log_dir"

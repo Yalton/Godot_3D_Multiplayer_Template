@@ -26,6 +26,9 @@ a generalized match-settings framework.
 
 ## Dedicated server support
 
+Core implementation complete. Headless startup skips client UI, console UI, microphone
+capture, and chat UI. `server.cfg` plus command-line overrides cover portable configuration.
+
 - Headless startup without constructing gameplay UI
 - Server configuration file
 - Server name, port, initial map, and player limit
@@ -56,6 +59,8 @@ Implemented in `Scripts/Network/ConnectionQualityMonitor.cs` and the lobby UI.
 
 ## RPC security helpers
 
+Implemented in `Scripts/Network/RpcSecurity.cs` and applied to core request RPCs.
+
 - Sender and owner validation
 - Session-state gating
 - Per-RPC rate limiting
@@ -72,6 +77,9 @@ Implemented in `Scripts/Network/ConnectionQualityMonitor.cs` and the lobby UI.
 - Steam and LAN identity display
 
 ## Multiplayer pause policy
+
+Implemented by `Scripts/UI/LocalInputContext.cs`. Modal UI suppresses local gameplay input
+without pausing network simulation.
 
 - Local escape menu without pausing network simulation
 - Optional host-controlled true pause
@@ -90,6 +98,10 @@ The persistent social mute/block state already lives in `PlayerIdentityService`;
 profile service could absorb it later.
 
 ## Expanded testing and network simulation
+
+Core lifecycle coverage now includes incompatible builds, synchronized loading, clock sync,
+host loss, headless startup, and deterministic security-helper checks. Transport simulation
+and Steam relay/invite automation remain environment-specific follow-up work.
 
 - Late join during `Loading`
 - Disconnect during `Loading`

@@ -4,13 +4,32 @@ namespace MultiplayerTemplate.Network;
 
 public readonly record struct ClockSample(int Sequence, double RttMs, double OffsetMs, ulong ServerTick);
 
+public static class NetworkTimeMath
+{
+    public static long OffsetUsec(long clientSendUsec, long clientReceiveUsec, long serverReceiveUsec)
+    {
+        var rttUsec = Math.Max(0, clientReceiveUsec - clientSendUsec);
+        return serverReceiveUsec + rttUsec / 2 - clientReceiveUsec;
+    }
+
+    public static ulong TickAt(long serverTimeUsec, int tickRate = NetworkClock.TickRate) =>
+        (ulong)Math.Max(0, serverTimeUsec * tickRate / 1_000_000);
+
+    public static double RemainingSeconds(long deadlineUsec, long nowUsec) =>
+        Math.Max(0, (deadlineUsec - nowUsec) / 1_000_000.0);
+
+    public static float Progress(long deadlineUsec, long nowUsec, double durationSeconds) =>
+        durationSeconds <= 0 ? 1f :
+        Math.Clamp(1f - (float)(RemainingSeconds(deadlineUsec, nowUsec) / durationSeconds), 0f, 1f);
+}
+
 public readonly record struct NetworkDeadline(long ServerDeadlineUsec)
 {
     public double RemainingSeconds =>
-        Math.Max(0, (ServerDeadlineUsec - NetworkClock.Instance.ServerTimeUsec) / 1_000_000.0);
+        NetworkTimeMath.RemainingSeconds(ServerDeadlineUsec, NetworkClock.Instance.ServerTimeUsec);
     public bool Expired => NetworkClock.Instance.ServerTimeUsec >= ServerDeadlineUsec;
     public float Progress(double durationSeconds) =>
-        durationSeconds <= 0 ? 1f : Mathf.Clamp(1f - (float)(RemainingSeconds / durationSeconds), 0f, 1f);
+        NetworkTimeMath.Progress(ServerDeadlineUsec, NetworkClock.Instance.ServerTimeUsec, durationSeconds);
 }
 
 /// <summary>NTP-style monotonic server clock and authoritative 60 Hz simulation timeline.</summary>
@@ -30,7 +49,7 @@ public partial class NetworkClock : Node
         (Multiplayer.IsServer() || _receivedSamples >= 3);
     public long ServerTimeUsec => LocalUsec + (long)_smoothedOffsetUsec;
     public double ServerTimeSeconds => ServerTimeUsec / 1_000_000.0;
-    public ulong AuthoritativeTick => (ulong)Math.Max(0, ServerTimeUsec * TickRate / 1_000_000);
+    public ulong AuthoritativeTick => NetworkTimeMath.TickAt(ServerTimeUsec);
     public double LastRttMs { get; private set; }
 
     private static long LocalUsec => (long)Time.GetTicksUsec();
@@ -116,7 +135,7 @@ public partial class NetworkClock : Node
         if (!_pending.Remove(sequence)) return;
         var received = LocalUsec;
         var rttUsec = Math.Max(0, received - clientSendUsec);
-        var offsetUsec = serverReceiveUsec + rttUsec * 0.5 - received;
+        var offsetUsec = NetworkTimeMath.OffsetUsec(clientSendUsec, received, serverReceiveUsec);
         _smoothedOffsetUsec = _receivedSamples == 0
             ? offsetUsec
             : Mathf.Lerp(_smoothedOffsetUsec, offsetUsec, 0.15);

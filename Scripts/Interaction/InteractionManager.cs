@@ -1,5 +1,6 @@
 using Godot;
 using MultiplayerTemplate.Game;
+using MultiplayerTemplate.Network;
 
 namespace MultiplayerTemplate.Interaction;
 
@@ -8,6 +9,7 @@ public partial class InteractionManager : Node
 {
     public static InteractionManager Instance { get; private set; } = null!;
     public const float Reach = 4.5f;
+    private readonly RpcRateLimiter _rateLimiter = new();
 
     public override void _Ready() => Instance = this;
 
@@ -21,7 +23,16 @@ public partial class InteractionManager : Node
         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void RequestInteraction(NodePath target)
     {
-        if (Multiplayer.IsServer()) HandleRequest(Multiplayer.GetRemoteSenderId(), target);
+        if (!RpcSecurity.RequireServer(this, nameof(RequestInteraction)) ||
+            !RpcSecurity.RequireKnownSender(this, nameof(RequestInteraction), out var sender) ||
+            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(RequestInteraction),
+                SessionManager.SessionState.Playing)) return;
+        if (!_rateLimiter.Allow(sender, nameof(RequestInteraction), 12, 1000))
+        {
+            RpcSecurity.Reject(nameof(RequestInteraction), sender, "rate limit exceeded");
+            return;
+        }
+        HandleRequest(sender, target);
     }
 
     private void HandleRequest(long peerId, NodePath targetPath)
@@ -36,7 +47,10 @@ public partial class InteractionManager : Node
         }
         var target = GetNodeOrNull<Node3D>(targetPath);
         if (target == null || !target.IsInGroup("interactable") ||
-            player.GlobalPosition.DistanceTo(target.GlobalPosition) > Reach) return;
+            !RpcSecurity.WithinDistance(player.EyePosition, target.GlobalPosition, Reach,
+                nameof(RequestInteraction), peerId) ||
+            !RpcSecurity.HasLineOfSight(player, player.EyePosition, target.GlobalPosition,
+                [player.GetRid()], target, nameof(RequestInteraction), peerId)) return;
         if (target is NetworkPhysicsObject physics) physics.ServerInteract(peerId);
         else if (target is NetworkInteractable interactable) interactable.ServerInteract(peerId);
     }

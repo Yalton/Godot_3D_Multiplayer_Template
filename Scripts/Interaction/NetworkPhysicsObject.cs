@@ -28,6 +28,7 @@ public partial class NetworkPhysicsObject : RigidBody3D
 
     public override void _PhysicsProcess(double delta)
     {
+        if (!Multiplayer.HasMultiplayerPeer()) return;
         if (!Multiplayer.IsServer())
         {
             var weight = Mathf.Min((float)delta * 15f, 1f);
@@ -38,8 +39,7 @@ public partial class NetworkPhysicsObject : RigidBody3D
 
         if (HeldByPeer != 0 && FindPlayer(HeldByPeer) is { } holder)
         {
-            var head = holder.GetNode<Node3D>("Head");
-            var desired = head.GlobalPosition - head.GlobalBasis.Z * 2.2f;
+            var desired = holder.HoldPosition;
             LinearVelocity = (desired - GlobalPosition) * 12f;
             AngularVelocity *= 0.8f;
         }

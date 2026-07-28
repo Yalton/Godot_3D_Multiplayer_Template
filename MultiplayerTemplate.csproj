@@ -6,4 +6,7 @@
     <LangVersion>latest</LangVersion>
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="MultiplayerTemplate.Tests/**/*.cs" />
+  </ItemGroup>
 </Project>

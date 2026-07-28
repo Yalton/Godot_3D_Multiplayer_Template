@@ -6,16 +6,25 @@ namespace MultiplayerTemplate.Game;
 
 public partial class GameWorld : Node3D
 {
-    private Node3D _playersRoot = null!;
+    private readonly System.Collections.Generic.Dictionary<long, NetworkPlayer> _players = new();
 
     public override void _Ready()
     {
         AddToGroup("game_world");
-        _playersRoot = GetNode<Node3D>("Players");
         SessionManager.Instance.MatchStarted += OnMatchStarted;
         SessionManager.Instance.MatchEnded += ClearPlayers;
         Multiplayer.PeerDisconnected += DespawnPlayer;
         Visible = false;
+    }
+
+    public override void _ExitTree()
+    {
+        if (SessionManager.Instance != null)
+        {
+            SessionManager.Instance.MatchStarted -= OnMatchStarted;
+            SessionManager.Instance.MatchEnded -= ClearPlayers;
+        }
+        Multiplayer.PeerDisconnected -= DespawnPlayer;
     }
 
     private void OnMatchStarted()
@@ -28,11 +37,16 @@ public partial class GameWorld : Node3D
 
     private void ClearPlayers()
     {
-        foreach (var child in _playersRoot.GetChildren()) child.QueueFree();
+        foreach (var player in _players.Values) player.QueueFree();
+        _players.Clear();
         Visible = false;
     }
 
-    private void DespawnPlayer(long peerId) => _playersRoot.GetNodeOrNull(peerId.ToString())?.QueueFree();
+    private void DespawnPlayer(long peerId)
+    {
+        if (!_players.Remove(peerId, out var player)) return;
+        player.QueueFree();
+    }
 
     public void SpawnForLateJoin(long joiningPeerId)
     {
@@ -49,10 +63,10 @@ public partial class GameWorld : Node3D
         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void SpawnPlayer(long peerId, Vector3 position)
     {
-        if (_playersRoot.HasNode(peerId.ToString())) return;
+        if (_players.ContainsKey(peerId)) return;
         var player = MakePlayer(peerId);
-        player.Setup(peerId);
-        _playersRoot.AddChild(player);
+        _players[peerId] = player;
+        AddChild(player);
         player.GlobalPosition = position;
     }
 
@@ -91,15 +105,17 @@ public partial class GameWorld : Node3D
         player.AddChild(mesh);
         var head = new Node3D { Name = "Head", Position = new Vector3(0, 1.55f, 0) };
         player.AddChild(head);
-        head.AddChild(new Camera3D { Name = "Camera3D", Fov = SettingsManager.Instance.GetFov() });
-        player.AddChild(new Label3D
+        var camera = new Camera3D { Fov = SettingsManager.Instance.GetFov() };
+        head.AddChild(camera);
+        var nameLabel = new Label3D
         {
-            Name = "NameLabel",
             Position = new Vector3(0, 2.25f, 0),
             Billboard = Godot.BaseMaterial3D.BillboardModeEnum.Enabled,
             NoDepthTest = true,
             FontSize = 32
-        });
+        };
+        player.AddChild(nameLabel);
+        player.Setup(peerId, head, camera, nameLabel);
         return player;
     }
 }

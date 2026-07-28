@@ -2,6 +2,8 @@ using Godot;
 using SettingsKit;
 using MultiplayerTemplate.Communication;
 using MultiplayerTemplate.Interaction;
+using MultiplayerTemplate.UI;
+using MultiplayerTemplate.Network;
 
 namespace MultiplayerTemplate.Game;
 
@@ -26,6 +28,8 @@ public partial class NetworkPlayer : CharacterBody3D
     private uint _nextInputSequence;
     private uint _lastReceivedSequence;
     private Camera3D _camera = null!;
+    private Node3D _head = null!;
+    private Label3D _nameLabel = null!;
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
 
@@ -35,39 +39,46 @@ public partial class NetworkPlayer : CharacterBody3D
     private bool IsLocalPlayer =>
         Multiplayer.HasMultiplayerPeer() && Multiplayer.GetUniqueId() == PeerId;
 
-    public void Setup(long id)
+    public void Setup(long id, Node3D head, Camera3D camera, Label3D nameLabel)
     {
         PeerId = id;
         Name = id.ToString();
+        _head = head;
+        _camera = camera;
+        _nameLabel = nameLabel;
         // The server owns every player node. PeerId identifies who may submit input.
         SetMultiplayerAuthority(1);
     }
 
+    public Vector3 HoldPosition => _head.GlobalPosition - _head.GlobalBasis.Z * 2.2f;
+    public Vector3 EyePosition => _camera.GlobalPosition;
+
     public override void _Ready()
     {
         AddToGroup("network_players");
-        _camera = GetNode<Camera3D>("Head/Camera3D");
-        GetNode<Label3D>("NameLabel").Text = Network.SessionManager.Instance.DisplayName(PeerId);
+        _nameLabel.Text = Network.SessionManager.Instance.DisplayName(PeerId);
         _camera.Current = IsLocalPlayer;
-        if (IsLocalPlayer) Input.MouseMode = Input.MouseModeEnum.Captured;
+        if (IsLocalPlayer) LocalInputContext.Instance.RefreshMouseMode();
         _targetPosition = GlobalPosition;
         if (IsLocalPlayer) BuildInteractionHud();
     }
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (IsLocalPlayer && @event.IsActionPressed("interact") && !TextChatManager.IsTyping)
+        if (IsLocalPlayer && @event.IsActionPressed("interact") &&
+            !LocalInputContext.Instance.GameplaySuppressed)
         {
             InteractionManager.Instance.Request(InteractionTarget());
             GetViewport().SetInputAsHandled();
             return;
         }
-        if (!IsLocalPlayer || Input.MouseMode != Input.MouseModeEnum.Captured) return;
+        if (!IsLocalPlayer || LocalInputContext.Instance.GameplaySuppressed ||
+            Input.MouseMode != Input.MouseModeEnum.Captured) return;
         if (@event is not InputEventMouseMotion motion) return;
         var sensitivity = SettingsManager.Instance.GetMouseSensitivity() / 15000f;
         _yaw -= motion.Relative.X * sensitivity;
         _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * sensitivity, -1.45f, 1.45f);
-        GetNode<Node3D>("Head").Rotation = new Vector3(_pitch, 0, 0);
+        _head.Rotation = new Vector3(_pitch, 0, 0);
     }
 
     public override void _PhysicsProcess(double delta)
@@ -109,7 +120,7 @@ public partial class NetworkPlayer : CharacterBody3D
     }
 
     private (Vector2 Move, bool Jump) ReadLocalInput() =>
-        TextChatManager.IsTyping
+        LocalInputContext.Instance.GameplaySuppressed
             ? (Vector2.Zero, false)
             : (Input.GetVector("move_left", "move_right", "move_forward", "move_back"),
                 Input.IsActionJustPressed("jump"));
@@ -205,7 +216,11 @@ public partial class NetworkPlayer : CharacterBody3D
         TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 1)]
     private void SubmitInput(Vector2 move, bool jump, float yaw, uint sequence)
     {
-        if (!Multiplayer.IsServer() || Multiplayer.GetRemoteSenderId() != PeerId) return;
+        if (!RpcSecurity.RequireServer(this, nameof(SubmitInput))) return;
+        var sender = Multiplayer.GetRemoteSenderId();
+        if (!RpcSecurity.RequireSender(sender, PeerId, nameof(SubmitInput)) ||
+            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(SubmitInput),
+                SessionManager.SessionState.Playing)) return;
         if (sequence <= _lastReceivedSequence) return;
         _lastReceivedSequence = sequence;
         _serverMoveInput = move.LimitLength(1f);
