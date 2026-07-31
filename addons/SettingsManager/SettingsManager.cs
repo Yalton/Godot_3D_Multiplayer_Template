@@ -431,6 +431,13 @@ public partial class SettingsManager : Node
 		SaveSetting("video", "vsync", enabled); // VENDOR-EDIT: persist (load reads video/vsync)
 	}
 
+	// TAA, SSAO, SSIL, and volumetric fog only exist in the Forward+ renderer; applying
+	// them under Compatibility (this template's default) or Mobile just emits engine
+	// errors while the UI pretends the setting took effect.
+	private static bool SupportsAdvancedEnvironment =>
+		(string)ProjectSettings.GetSetting("rendering/renderer/rendering_method", "forward_plus")
+			== "forward_plus";
+
 	private WorldEnvironment? FindWorldEnvironment(Node node)
 	{
 		if (node is WorldEnvironment worldEnv)
@@ -615,17 +622,36 @@ public partial class SettingsManager : Node
 		Log.Debug(MODULE_NAME, $"FOV set to: {fov}");
 	}
 
-	// Generic method to save a single setting
+	// Generic method to save a single setting. The write is debounced: a slider drag
+	// calls setters every tick, and a synchronous whole-file save per tick is pure
+	// disk churn. Changes flush half a second after they stop (and on exit).
 	private void SaveSetting(string section, string key, Variant value)
 	{
 		_config.SetValue(section, key, value);
+		RequestSave();
+		Log.Debug(MODULE_NAME, $"Queued setting: {section}/{key} = {value}");
+	}
+
+	private bool _savePending;
+
+	private void RequestSave()
+	{
+		if (_savePending)
+			return;
+		_savePending = true;
+		GetTree().CreateTimer(0.5).Timeout += FlushPendingSave;
+	}
+
+	private void FlushPendingSave()
+	{
+		if (!_savePending)
+			return;
+		_savePending = false;
 		var err = _config.Save(CONFIG_PATH);
 		if (err != Error.Ok)
 		{
-			Log.Error(MODULE_NAME, $"Failed to save setting {section}/{key}: {err}");
-			return;
+			Log.Error(MODULE_NAME, $"Failed to save settings: {err}");
 		}
-		Log.Debug(MODULE_NAME, $"Saved setting: {section}/{key} = {value}");
 	}
 
 	// Method to save all current settings
@@ -798,6 +824,8 @@ public partial class SettingsManager : Node
 
 	private void ApplyTaa(bool enabled)
 	{
+		if (!SupportsAdvancedEnvironment)
+			return;
 		GetTree().Root.UseTaa = enabled;
 		Log.Debug(MODULE_NAME, $"TAA applied: {enabled}");
 	}
@@ -868,7 +896,7 @@ public partial class SettingsManager : Node
 
 	private void ApplySsaoQuality(int quality)
 	{
-		if (quality <= 0) return;
+		if (!SupportsAdvancedEnvironment || quality <= 0) return;
 		var rsQuality = quality switch
 		{
 			1 => RenderingServer.EnvironmentSsaoQuality.Low,
@@ -882,6 +910,8 @@ public partial class SettingsManager : Node
 
 	private void ApplySsaoEnvironment(int quality)
 	{
+		if (!SupportsAdvancedEnvironment)
+			return;
 		var env = FindWorldEnvironment(GetTree().Root);
 		if (env?.Environment != null)
 		{
@@ -904,7 +934,7 @@ public partial class SettingsManager : Node
 
 	private void ApplySsilQuality(int quality)
 	{
-		if (quality <= 0) return;
+		if (!SupportsAdvancedEnvironment || quality <= 0) return;
 		var rsQuality = quality switch
 		{
 			1 => RenderingServer.EnvironmentSsilQuality.Low,
@@ -918,6 +948,8 @@ public partial class SettingsManager : Node
 
 	private void ApplySsilEnvironment(int quality)
 	{
+		if (!SupportsAdvancedEnvironment)
+			return;
 		var env = FindWorldEnvironment(GetTree().Root);
 		if (env?.Environment != null)
 		{
@@ -939,6 +971,8 @@ public partial class SettingsManager : Node
 
 	private void ApplyVolumetricFog(bool enabled)
 	{
+		if (!SupportsAdvancedEnvironment)
+			return;
 		var env = FindWorldEnvironment(GetTree().Root);
 		if (env?.Environment != null)
 		{
@@ -1112,6 +1146,7 @@ public partial class SettingsManager : Node
 
 	public override void _ExitTree()
 	{
+		FlushPendingSave();
 		if (_instance == this)
 			_instance = null;
 	}

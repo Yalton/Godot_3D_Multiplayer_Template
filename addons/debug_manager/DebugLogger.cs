@@ -11,6 +11,7 @@ public partial class DebugLogger : Node
 	private static DebugLogger _instance = null!;
 	public static DebugLogger Instance => _instance;
 	private const string MODULE_CONFIG_PATH = "user://debug_modules/";
+	private const string GLOBAL_DEBUG_CONFIG_PATH = MODULE_CONFIG_PATH + "global_debug.cfg";
 
 	private Dictionary<string, bool> registeredModules = new Dictionary<string, bool>();
 	private Dictionary<string, ModuleDebugConfig> moduleConfigs = new Dictionary<string, ModuleDebugConfig>();
@@ -38,6 +39,13 @@ public partial class DebugLogger : Node
 		if (!DisableFileWriting)
 		{
 			EnsureConfigDirectory();
+		}
+
+		// Apply the dock-persisted global debug flag (dev builds force-enable above;
+		// if the file is absent the scene/inspector value stands).
+		if (!DisableFileWriting && !OS.HasFeature("dev"))
+		{
+			ApplyGlobalDebugSettingFromDisk();
 		}
 
 		// Sync DebugDraw3D with our global debug state
@@ -70,6 +78,12 @@ public partial class DebugLogger : Node
 
 	private void ReloadModuleConfigsFromDisk()
 	{
+		// Global flag first — the editor dock persists it to the same directory.
+		if (ApplyGlobalDebugSettingFromDisk())
+		{
+			GD.Print($"[DebugLogger] Hot-reloaded global debug: {(DebugEnabled ? "enabled" : "disabled")}");
+		}
+
 		foreach (var moduleName in registeredModules.Keys.ToList())
 		{
 			string configPath = MODULE_CONFIG_PATH + moduleName + ".tres";
@@ -92,6 +106,26 @@ public partial class DebugLogger : Node
 				}
 			}
 		}
+	}
+
+	// Reads the global debug flag persisted by the editor dock (global_debug.cfg) and
+	// applies it to DebugEnabled. An absent or unreadable file leaves DebugEnabled as-is.
+	// Returns true when the value actually changed.
+	private bool ApplyGlobalDebugSettingFromDisk()
+	{
+		var config = new ConfigFile();
+		if (config.Load(GLOBAL_DEBUG_CONFIG_PATH) != Godot.Error.Ok)
+			return false;
+
+		bool enabled = (bool)config.GetValue("debug", "enabled", DebugEnabled);
+		if (enabled == DebugEnabled)
+			return false;
+
+		DebugEnabled = enabled;
+#if DEBUGDRAW3D
+		DebugDraw3D.DebugEnabled = DebugEnabled;
+#endif
+		return true;
 	}
 
 	public void RegisterModule(string moduleName, bool defaultEnabled = true)

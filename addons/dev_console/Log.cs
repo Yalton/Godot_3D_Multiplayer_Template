@@ -11,11 +11,16 @@ namespace DevConsoleKit;
 /// </summary>
 internal static class Log
 {
-	// No-op: a standalone build has no module registry. Kept so copied source
-	// that calls RegisterModule(...) compiles unchanged.
-	public static void RegisterModule(string module, bool enabled = true) { }
+	private static readonly System.Collections.Generic.Dictionary<string, bool> _modules = new();
 
-	public static void Debug(string module, string message) => GD.Print($"[{module}] {message}");
+	// Honors the enabled flag for Debug chatter; Info/Warning/Error always print.
+	public static void RegisterModule(string module, bool enabled = true) => _modules[module] = enabled;
+
+	public static void Debug(string module, string message)
+	{
+		if (_modules.GetValueOrDefault(module, true)) GD.Print($"[{module}] {message}");
+	}
+
 	public static void Info(string module, string message) => GD.Print($"[{module}] {message}");
 	public static void Warning(string module, string message) => GD.PushWarning($"[{module}] {message}");
 	public static void Error(string module, string message) => GD.PushError($"[{module}] {message}");

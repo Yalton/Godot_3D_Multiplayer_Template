@@ -8,7 +8,9 @@ namespace InputRemapKit;
 
 /// <summary>
 /// Autoload that lets the player rebind input actions at runtime and persists the
-/// overrides. Keyboard and mouse-button bindings are supported.
+/// overrides. Keyboard, mouse-button, and joypad (button/axis) bindings are supported.
+/// Rebinding replaces only events of the same input family (keyboard/mouse vs joypad),
+/// so an action can keep one binding of each kind.
 ///
 /// Portable addon copy: namespaced, dependency-free logging, persists to its own
 /// config file, and — instead of a hardcoded game action list — auto-discovers
@@ -46,7 +48,7 @@ public partial class InputRemapManager : Node
 	/// <summary>Actions the player is allowed to rebind (resolved at _Ready).</summary>
 	public string[] RebindableActions => _rebindableActions;
 
-	private Dictionary<string, InputEvent> _defaults = new();
+	private Dictionary<string, InputEvent[]> _defaults = new();
 	private ConfigFile _config = new ConfigFile();
 
 	public override void _Ready()
@@ -104,6 +106,7 @@ public partial class InputRemapManager : Node
 
 	/// <summary>
 	/// Snapshots the current InputMap bindings before any overrides are applied.
+	/// All events per action are captured so reset can restore every default.
 	/// </summary>
 	private void CaptureDefaults()
 	{
@@ -112,7 +115,7 @@ public partial class InputRemapManager : Node
 			var events = InputMap.ActionGetEvents(action);
 			if (events.Count > 0)
 			{
-				_defaults[action] = events[0];
+				_defaults[action] = events.ToArray();
 			}
 		}
 		Log.Debug(MODULE_NAME, $"Captured defaults for {_defaults.Count} actions");
@@ -142,30 +145,50 @@ public partial class InputRemapManager : Node
 				continue;
 
 			string saved = (string)_config.GetValue(SECTION, action, "");
-			InputEvent? ev = DeserializeEvent(saved);
-			if (ev == null)
+			var loaded = DeserializeEvents(saved);
+			if (loaded.Count == 0)
 				continue;
 
+			// Replace only the families present in the saved data; other-family
+			// defaults (e.g. a joypad binding under an old keyboard-only save)
+			// are preserved.
+			var kept = InputMap.ActionGetEvents(action)
+				.Where(existing => !loaded.Any(ev => IsJoypadEvent(ev) == IsJoypadEvent(existing)))
+				.ToArray();
+
 			InputMap.ActionEraseEvents(action);
-			InputMap.ActionAddEvent(action, ev);
+			foreach (var ev in kept)
+				InputMap.ActionAddEvent(action, ev);
+			foreach (var ev in loaded)
+				InputMap.ActionAddEvent(action, ev);
 			Log.Debug(MODULE_NAME, $"Loaded override: {action} = {saved}");
 		}
 	}
 
 	/// <summary>
-	/// Remaps an action to a new input event. Saves and emits BindingChanged.
+	/// Remaps an action to a new input event. Only existing events of the same
+	/// input family (keyboard/mouse vs joypad) are replaced; events of the other
+	/// family are preserved. Saves and emits BindingChanged.
 	/// </summary>
 	public void RemapAction(string action, InputEvent newEvent)
 	{
+		bool newIsJoypad = IsJoypadEvent(newEvent);
+		var kept = InputMap.ActionGetEvents(action)
+			.Where(existing => IsJoypadEvent(existing) != newIsJoypad)
+			.ToArray();
+
 		InputMap.ActionEraseEvents(action);
+		foreach (var ev in kept)
+			InputMap.ActionAddEvent(action, ev);
 		InputMap.ActionAddEvent(action, newEvent);
-		SaveBinding(action, newEvent);
+
+		SaveBinding(action);
 		EmitSignal(SignalName.BindingChanged, action);
 		Log.Debug(MODULE_NAME, $"Remapped {action} to {newEvent.AsText()}");
 	}
 
 	/// <summary>
-	/// Resets a single action back to its default binding.
+	/// Resets a single action back to its default bindings.
 	/// </summary>
 	public void ResetAction(string action)
 	{
@@ -173,7 +196,8 @@ public partial class InputRemapManager : Node
 			return;
 
 		InputMap.ActionEraseEvents(action);
-		InputMap.ActionAddEvent(action, _defaults[action]);
+		foreach (var ev in _defaults[action])
+			InputMap.ActionAddEvent(action, ev);
 		RemoveSavedBinding(action);
 		EmitSignal(SignalName.BindingChanged, action);
 		Log.Debug(MODULE_NAME, $"Reset {action} to default");
@@ -190,7 +214,8 @@ public partial class InputRemapManager : Node
 				continue;
 
 			InputMap.ActionEraseEvents(action);
-			InputMap.ActionAddEvent(action, _defaults[action]);
+			foreach (var ev in _defaults[action])
+				InputMap.ActionAddEvent(action, ev);
 		}
 
 		// Clear entire section
@@ -218,12 +243,16 @@ public partial class InputRemapManager : Node
 	}
 
 	/// <summary>
-	/// Returns the first input event currently bound to an action.
+	/// Returns the first keyboard/mouse event currently bound to an action, or null.
 	/// </summary>
 	public InputEvent? GetCurrentEvent(string action)
 	{
-		var events = InputMap.ActionGetEvents(action);
-		return events.Count > 0 ? events[0] : null;
+		foreach (var ev in InputMap.ActionGetEvents(action))
+		{
+			if (!IsJoypadEvent(ev))
+				return ev;
+		}
+		return null;
 	}
 
 	/// <summary>
@@ -261,13 +290,33 @@ public partial class InputRemapManager : Node
 			return mouseA.ButtonIndex == mouseB.ButtonIndex;
 		}
 
+		if (a is InputEventJoypadButton joyA && b is InputEventJoypadButton joyB)
+		{
+			return joyA.ButtonIndex == joyB.ButtonIndex;
+		}
+
+		if (a is InputEventJoypadMotion motionA && b is InputEventJoypadMotion motionB)
+		{
+			return motionA.Axis == motionB.Axis
+				&& Mathf.Sign(motionA.AxisValue) == Mathf.Sign(motionB.AxisValue);
+		}
+
 		return false;
 	}
 
-	private void SaveBinding(string action, InputEvent ev)
+	/// <summary>
+	/// True for joypad events; false for keyboard/mouse events. The two families
+	/// are rebound and saved independently.
+	/// </summary>
+	private static bool IsJoypadEvent(InputEvent ev)
+	{
+		return ev is InputEventJoypadButton || ev is InputEventJoypadMotion;
+	}
+
+	private void SaveBinding(string action)
 	{
 		_config.Load(CONFIG_PATH);
-		_config.SetValue(SECTION, action, SerializeEvent(ev));
+		_config.SetValue(SECTION, action, SerializeEvents(InputMap.ActionGetEvents(action)));
 		var err = _config.Save(CONFIG_PATH);
 		if (err != Error.Ok)
 		{
@@ -289,6 +338,18 @@ public partial class InputRemapManager : Node
 		}
 	}
 
+	/// <summary>
+	/// Serializes all events of an action into one config value: individual event
+	/// strings joined with "|". A single event produces the same string as the old
+	/// one-event-per-action format.
+	/// </summary>
+	private string SerializeEvents(Godot.Collections.Array<InputEvent> events)
+	{
+		return string.Join("|", events
+			.Select(SerializeEvent)
+			.Where(s => !string.IsNullOrEmpty(s)));
+	}
+
 	private string SerializeEvent(InputEvent ev)
 	{
 		if (ev is InputEventKey keyEvent)
@@ -302,7 +363,37 @@ public partial class InputRemapManager : Node
 			return $"mouse:{(int)mouseEvent.ButtonIndex}";
 		}
 
+		if (ev is InputEventJoypadButton joyButtonEvent)
+		{
+			return $"joybtn:{(int)joyButtonEvent.ButtonIndex}";
+		}
+
+		if (ev is InputEventJoypadMotion joyMotionEvent)
+		{
+			int sign = joyMotionEvent.AxisValue < 0 ? -1 : 1;
+			return $"joyaxis:{(int)joyMotionEvent.Axis}:{sign}";
+		}
+
 		return "";
+	}
+
+	/// <summary>
+	/// Parses a saved config value: "|"-separated event strings. An old-format
+	/// value (a single event string) parses as a one-element list.
+	/// </summary>
+	private List<InputEvent> DeserializeEvents(string data)
+	{
+		var events = new List<InputEvent>();
+		if (string.IsNullOrEmpty(data))
+			return events;
+
+		foreach (string part in data.Split('|'))
+		{
+			InputEvent? ev = DeserializeEvent(part);
+			if (ev != null)
+				events.Add(ev);
+		}
+		return events;
 	}
 
 	private InputEvent? DeserializeEvent(string data)
@@ -325,6 +416,28 @@ public partial class InputRemapManager : Node
 			{
 				var ev = new InputEventMouseButton();
 				ev.ButtonIndex = (MouseButton)button;
+				return ev;
+			}
+		}
+		else if (data.StartsWith("joybtn:"))
+		{
+			if (int.TryParse(data.Substring(7), out int button))
+			{
+				var ev = new InputEventJoypadButton();
+				ev.ButtonIndex = (JoyButton)button;
+				return ev;
+			}
+		}
+		else if (data.StartsWith("joyaxis:"))
+		{
+			var parts = data.Substring(8).Split(':');
+			if (parts.Length == 2
+				&& int.TryParse(parts[0], out int axis)
+				&& int.TryParse(parts[1], out int sign))
+			{
+				var ev = new InputEventJoypadMotion();
+				ev.Axis = (JoyAxis)axis;
+				ev.AxisValue = sign < 0 ? -1f : 1f;
 				return ev;
 			}
 		}

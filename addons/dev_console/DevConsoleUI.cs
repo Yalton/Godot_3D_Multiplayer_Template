@@ -109,10 +109,12 @@ public partial class DevConsoleUI : Control
 			}
 		}
 
-		// Handle mouse wheel scrolling when console is visible
+		// Handle mouse wheel scrolling when console is visible — but only while the
+		// cursor is over the console output, so other UI keeps its own scrolling.
 		if (Visible && @event is InputEventMouseButton mouseEvent)
 		{
-			if (mouseEvent.ButtonIndex == MouseButton.WheelUp || mouseEvent.ButtonIndex == MouseButton.WheelDown)
+			if ((mouseEvent.ButtonIndex == MouseButton.WheelUp || mouseEvent.ButtonIndex == MouseButton.WheelDown) &&
+				scroll_container != null && scroll_container.GetGlobalRect().HasPoint(mouseEvent.GlobalPosition))
 			{
 				HandleMouseScroll(mouseEvent);
 				GetViewport().SetInputAsHandled();
@@ -216,8 +218,12 @@ public partial class DevConsoleUI : Control
 			return;
 		}
 
-		// Add command to history
+		// Add command to history (bounded like the output history)
 		command_history.Add(text);
+		if (command_history.Count > max_lines)
+		{
+			command_history.RemoveAt(0);
+		}
 		history_index = command_history.Count;
 
 		// Display the command in console (escaped: typed input is not BBCode)

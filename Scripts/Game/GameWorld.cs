@@ -6,6 +6,13 @@ namespace MultiplayerTemplate.Game;
 
 public partial class GameWorld : Node3D
 {
+    /// <summary>
+    /// Optional replacement for the built-in capsule rig. The scene root must be a
+    /// NetworkPlayer with children "Head" (Node3D), "Head/Camera3D", and "NameLabel"
+    /// (Label3D). Leave unset to use the built-in rig.
+    /// </summary>
+    [Export] public PackedScene? PlayerScene { get; set; }
+
     private readonly System.Collections.Generic.Dictionary<long, NetworkPlayer> _players = new();
 
     public override void _Ready()
@@ -91,8 +98,23 @@ public partial class GameWorld : Node3D
         return new Vector3(Mathf.Cos(angle) * 4f, 1f, Mathf.Sin(angle) * 4f);
     }
 
-    private static NetworkPlayer MakePlayer(long peerId)
+    private NetworkPlayer MakePlayer(long peerId)
     {
+        if (PlayerScene != null)
+        {
+            var instance = PlayerScene.Instantiate();
+            if (instance is NetworkPlayer custom &&
+                custom.GetNodeOrNull<Node3D>("Head") is { } customHead &&
+                customHead.GetNodeOrNull<Camera3D>("Camera3D") is { } customCamera &&
+                custom.GetNodeOrNull<Label3D>("NameLabel") is { } customLabel)
+            {
+                custom.Setup(peerId, customHead, customCamera, customLabel);
+                return custom;
+            }
+            GD.PushError("PlayerScene needs a NetworkPlayer root with Head/Camera3D and " +
+                         "NameLabel children; falling back to the built-in rig.");
+            instance.QueueFree();
+        }
         var player = new NetworkPlayer
         {
             // Match the named layers in project.godot: live on "Players" (2), collide

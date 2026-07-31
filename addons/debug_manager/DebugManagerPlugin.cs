@@ -23,7 +23,12 @@ public partial class DebugManagerPlugin : EditorPlugin
 		if (debugManagerDock != null)
 		{
 			RemoveDock(debugManagerDock);
-			debugManagerInstance?.QueueFree();
+			// Free the dock itself, not just the UI under it — RemoveDock only detaches,
+			// so skipping this leaks the dock on every plugin disable/enable cycle.
+			// Freeing the dock also frees debugManagerInstance (it is a child).
+			debugManagerDock.QueueFree();
+			debugManagerDock = null!;
+			debugManagerInstance = null!;
 		}
 	}
 }

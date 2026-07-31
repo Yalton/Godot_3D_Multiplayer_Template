@@ -15,6 +15,11 @@ The server is always multiplayer peer `1`. `GameWorld` tracks players by peer ID
 dictionary; node names are not an identity contract. `PeerId` identifies which client may
 submit input.
 
+To swap the player rig without touching code, set `GameWorld.PlayerScene` (exported in the
+inspector on the match scene's root) to your own `PackedScene`. Its root must be a
+`NetworkPlayer` (or subclass) with children `Head` (Node3D), `Head/Camera3D`, and `NameLabel`
+(Label3D); movement tuning (`Speed`, `JumpVelocity`) is exported on `NetworkPlayer`.
+
 ## Load a match scene
 
 Put the gameplay root in its own `PackedScene`, with deterministic node paths on every peer:

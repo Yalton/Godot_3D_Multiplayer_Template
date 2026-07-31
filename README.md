@@ -45,6 +45,9 @@ godot --path . --join=127.0.0.1 --name="Player Two"
 
 Copy `server.cfg.example` to `server.cfg` for dedicated-server name and player-limit defaults.
 Command-line values such as `--server-name`, `--max-players`, and `--port` override them.
+A headless dedicated server starts the match automatically once every connected client is
+ready, and hosts can also drive the flow from the dev console with `start_match` and
+`end_match`.
 
 Run the complete xUnit, coverage, and multiplayer integration suite with:
 
@@ -104,6 +107,20 @@ other outcomes directly from clients; accept intent, validate it on the server, 
 the result.
 
 See [docs/EXTENDING.md](docs/EXTENDING.md) for the replacement seams and shipping checklist.
+
+## Security notes
+
+Known trust limitations to keep in mind when shipping:
+
+- Steam identity is self-reported at registration; there is no auth-ticket validation, so a
+  modified client can claim any Steam ID. Persistent mute/block keys derived from it (and the
+  LAN fallback, which keys off the lowercased display name) are therefore spoofable. Add
+  Steamworks auth-session tickets before trusting identity for anything consequential.
+- The dev console is disabled in exports unless the export preset sets the
+  `enable_console_dev` feature tag; admin-only commands additionally require
+  `DevConsoleManager.SetAdminStatus(true)`, which shipped builds must gate themselves.
+- Rate limits and validation in `RpcSecurity` bound abuse but are tuned for small friendly
+  sessions, not hostile public servers.
 
 ## Core scope
 
