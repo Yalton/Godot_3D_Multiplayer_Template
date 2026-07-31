@@ -6,7 +6,9 @@ log_dir="$(mktemp -d)"
 pids=()
 
 cleanup() {
-  for pid in "${pids[@]}"; do
+  # ${pids[@]+...} guards the expansion: macOS bash 3.2 treats an empty array as
+  # unset, which trips `set -u` inside the EXIT trap.
+  for pid in ${pids[@]+"${pids[@]}"}; do
     kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true

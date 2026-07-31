@@ -199,10 +199,12 @@ public partial class SessionManager : Node
     private void OnPeerDisconnected(long peerId)
     {
         DebugLogger.Instance.Info(LogModule, $"Peer disconnected: {peerId}");
+        _requestLimiter.Forget(peerId);
         if (!Multiplayer.IsServer()) return;
         Players.Remove(peerId);
         Rpc(nameof(SyncRoster), Players);
         RosterChanged?.Invoke(Players);
+        TryAutoStartDedicated();
     }
 
     private void OnConnectionFailed() => OnTransportFailed("Connection failed or timed out.");
@@ -230,6 +232,11 @@ public partial class SessionManager : Node
         if (!_requestLimiter.Allow(sender, nameof(RegisterPlayer), 2, 5000))
         {
             RpcSecurity.Reject(nameof(RegisterPlayer), sender, "rate limit exceeded");
+            return;
+        }
+        if (Players.ContainsKey(sender))
+        {
+            RpcSecurity.Reject(nameof(RegisterPlayer), sender, "peer is already registered");
             return;
         }
         if (protocolVersion != NetworkBuildInfo.ProtocolVersion || gameVersion != NetworkBuildInfo.GameVersion)
@@ -299,6 +306,18 @@ public partial class SessionManager : Node
         data["ready"] = ready;
         Rpc(nameof(SyncRoster), Players);
         RosterChanged?.Invoke(Players);
+        TryAutoStartDedicated();
+    }
+
+    // A headless dedicated server has no host UI, so the lobby would otherwise never
+    // leave the Lobby state. Start as soon as every connected client is ready.
+    private void TryAutoStartDedicated()
+    {
+        if (!IsDedicatedServer || State != SessionState.Lobby || Players.Count <= 1) return;
+        foreach (var (id, data) in Players)
+            if (id != 1 && !data.GetValueOrDefault("ready", false).AsBool()) return;
+        DebugLogger.Instance.Info(LogModule, "All clients ready; starting match");
+        StartMatch();
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]

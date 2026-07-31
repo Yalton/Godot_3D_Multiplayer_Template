@@ -6,9 +6,10 @@ using MultiplayerTemplate.UI;
 namespace MultiplayerTemplate.Communication;
 
 /// <summary>
-/// Dependency-free positional push-to-talk. Captures 48 kHz microphone audio,
-/// downsamples it to 16 kHz mono PCM, relays through the server, and plays it
-/// from the speaking player's world position.
+/// Dependency-free positional push-to-talk. Captures microphone audio at the
+/// engine mix rate, resamples it to 16 kHz mono PCM, relays through the server,
+/// and plays it from the speaking player's world position. The microphone is
+/// only hot while a match is active — never at the menu or in the lobby.
 /// </summary>
 public partial class PositionalVoiceChat : Node
 {
@@ -18,6 +19,7 @@ public partial class PositionalVoiceChat : Node
     private const int PlaybackRate = 16000;
     private AudioEffectCapture? _capture;
     private AudioStreamPlayer? _micPump;
+    private VoiceResampler? _resampler;
     private readonly System.Collections.Generic.Dictionary<long, AudioStreamPlayer3D> _speakers = new();
     private readonly RpcRateLimiter _rateLimiter = new();
     private bool _captureAvailable;
@@ -25,6 +27,8 @@ public partial class PositionalVoiceChat : Node
     public override void _Ready()
     {
         Instance = this;
+        Multiplayer.PeerDisconnected += OnPeerDisconnected;
+        SessionManager.Instance.MatchEnded += OnMatchEnded;
         if (DisplayServer.GetName() == "headless")
         {
             ProcessMode = ProcessModeEnum.Disabled;
@@ -38,14 +42,36 @@ public partial class PositionalVoiceChat : Node
         AudioServer.SetBusMute(bus, true);
         _capture = new AudioEffectCapture { BufferLength = 0.25f };
         AudioServer.AddBusEffect(bus, _capture);
+        _resampler = new VoiceResampler(AudioServer.GetMixRate(), PlaybackRate);
         _micPump = new AudioStreamPlayer
         {
             Stream = new AudioStreamMicrophone(),
-            Bus = "VoiceCapture",
-            Autoplay = true
+            Bus = "VoiceCapture"
         };
         AddChild(_micPump);
+        SessionManager.Instance.MatchStarted += StartCapture;
+    }
+
+    private void StartCapture()
+    {
+        if (_micPump == null || _micPump.Playing) return;
+        _capture?.ClearBuffer();
+        _resampler?.Reset();
         _micPump.Play();
+    }
+
+    private void OnMatchEnded()
+    {
+        _micPump?.Stop();
+        _capture?.ClearBuffer();
+        foreach (var speaker in _speakers.Values) speaker.QueueFree();
+        _speakers.Clear();
+    }
+
+    private void OnPeerDisconnected(long peerId)
+    {
+        _rateLimiter.Forget(peerId);
+        if (_speakers.Remove(peerId, out var speaker)) speaker.QueueFree();
     }
 
     public override void _Process(double delta)
@@ -53,18 +79,19 @@ public partial class PositionalVoiceChat : Node
         UpdateSpeakerPositions();
         if (!_captureAvailable || !Multiplayer.HasMultiplayerPeer() || !SessionManager.Instance.MatchActive ||
             LocalInputContext.Instance.GameplaySuppressed ||
-            !Input.IsActionPressed("push_to_talk") || _capture == null) return;
+            !Input.IsActionPressed("push_to_talk") || _capture == null || _resampler == null) return;
         while (_capture.CanGetBuffer(CaptureFrames))
         {
             var stereo = _capture.GetBuffer(CaptureFrames);
-            var pcm = new byte[(stereo.Length / 3) * 2];
-            var write = 0;
-            for (var i = 0; i + 2 < stereo.Length; i += 3)
+            var mono = new float[stereo.Length];
+            for (var i = 0; i < stereo.Length; i++) mono[i] = (stereo[i].X + stereo[i].Y) * 0.5f;
+            var samples = _resampler.Process(mono);
+            if (samples.Length == 0) continue;
+            var pcm = new byte[samples.Length * 2];
+            for (var i = 0; i < samples.Length; i++)
             {
-                var mono = Mathf.Clamp((stereo[i].X + stereo[i].Y) * 0.5f, -1f, 1f);
-                var sample = (short)(mono * short.MaxValue);
-                pcm[write++] = (byte)(sample & 0xff);
-                pcm[write++] = (byte)((sample >> 8) & 0xff);
+                pcm[i * 2] = (byte)(samples[i] & 0xff);
+                pcm[i * 2 + 1] = (byte)((samples[i] >> 8) & 0xff);
             }
             if (Multiplayer.IsServer()) RelayVoice(Multiplayer.GetUniqueId(), pcm);
             else RpcId(1, nameof(SubmitVoice), pcm);
@@ -104,7 +131,10 @@ public partial class PositionalVoiceChat : Node
     private void PlayPacket(long peerId, byte[] pcm)
     {
         if (peerId == Multiplayer.GetUniqueId() || IsLocallyMuted(peerId) || pcm.Length % 2 != 0) return;
+        // Without a body to attach to, the speaker would sit at the world origin.
+        if (FindPlayer(peerId) is not { } body) return;
         var player = EnsureSpeaker(peerId);
+        player.GlobalPosition = body.GlobalPosition + Vector3.Up * 1.5f;
         if (player.GetStreamPlayback() is not AudioStreamGeneratorPlayback playback) return;
         var frames = new Vector2[pcm.Length / 2];
         for (var i = 0; i < frames.Length; i++)
@@ -137,6 +167,13 @@ public partial class PositionalVoiceChat : Node
         foreach (var node in GetTree().GetNodesInGroup("network_players"))
             if (node is NetworkPlayer player && _speakers.TryGetValue(player.PeerId, out var speaker))
                 speaker.GlobalPosition = player.GlobalPosition + Vector3.Up * 1.5f;
+    }
+
+    private NetworkPlayer? FindPlayer(long peerId)
+    {
+        foreach (var node in GetTree().GetNodesInGroup("network_players"))
+            if (node is NetworkPlayer player && player.PeerId == peerId) return player;
+        return null;
     }
 
     private static bool IsLocallyMuted(long peerId) =>

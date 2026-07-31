@@ -37,11 +37,7 @@ public partial class DebugLogger : Node
 
 		if (!DisableFileWriting)
 		{
-			using var dir = DirAccess.Open("user://");
-			if (!dir.DirExists(MODULE_CONFIG_PATH))
-			{
-				dir.MakeDir(MODULE_CONFIG_PATH);
-			}
+			EnsureConfigDirectory();
 		}
 
 		// Sync DebugDraw3D with our global debug state
@@ -52,7 +48,9 @@ public partial class DebugLogger : Node
 		// Poll .tres configs so toggles made in the editor plugin panel propagate to the running game.
 		// Skipped in dev builds — RegisterModule already force-enables everything; reloading from disk
 		// would just re-disable modules based on whatever was last persisted in a non-dev run.
-		if (!DisableFileWriting && !OS.HasFeature("dev"))
+		// Editor-launched games only: the dock the polling exists for cannot reach an export,
+		// so shipped builds would pay per-second disk I/O for nothing.
+		if (!DisableFileWriting && !OS.HasFeature("dev") && OS.HasFeature("editor"))
 		{
 			var reloadTimer = new Godot.Timer
 			{
@@ -76,6 +74,11 @@ public partial class DebugLogger : Node
 		{
 			string configPath = MODULE_CONFIG_PATH + moduleName + ".tres";
 			if (!Godot.FileAccess.FileExists(configPath))
+				continue;
+
+			// Same torn-file guard as LoadModuleConfig: a concurrent instance may be
+			// mid-write, and loading a truncated .tres spams unsuppressable native errors.
+			if (!HasValidResourceHeader(configPath))
 				continue;
 
 			var resource = ResourceLoader.Load(configPath, "", ResourceLoader.CacheMode.Ignore);
@@ -382,7 +385,22 @@ public partial class DebugLogger : Node
 	public void SetFileWritingEnabled(bool enabled)
 	{
 		DisableFileWriting = !enabled;
+		// The config directory is normally created in _Ready; if the game started with
+		// file writing disabled, it does not exist yet and every save would fail.
+		if (enabled)
+		{
+			EnsureConfigDirectory();
+		}
 		GD.Print($"File writing {(DisableFileWriting ? "disabled" : "enabled")}");
+	}
+
+	private static void EnsureConfigDirectory()
+	{
+		using var dir = DirAccess.Open("user://");
+		if (dir != null && !dir.DirExists(MODULE_CONFIG_PATH))
+		{
+			dir.MakeDir(MODULE_CONFIG_PATH);
+		}
 	}
 
 	// Property for external access to registered modules (read-only)

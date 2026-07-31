@@ -177,20 +177,23 @@ public partial class SettingsManager : Node
 		_ambienceBus = AudioServer.GetBusIndex("Ambience");
 	}
 
-	// Load settings from cached config file
+	// Load settings from cached config file. Every key falls back to its default
+	// individually, so a file missing any single section or key loads fine — only a
+	// completely empty/absent file triggers writing the defaults out.
 	public void LoadSettings()
 	{
-		if (_config.HasSection("audio"))
+		if (_config.GetSections().Length > 0)
 		{
 			try
 			{
 				Log.Info(MODULE_NAME, "Loading settings from config file");
 
-				// Load volume settings
-				float masterVolume = (float)_config.GetValue("audio", "master_volume", DEFAULT_MASTER_VOLUME);
-				float musicVolume = (float)_config.GetValue("audio", "music_volume", DEFAULT_MUSIC_VOLUME);
-				float sfxVolume = (float)_config.GetValue("audio", "sfx_volume", DEFAULT_SFX_VOLUME);
-				float ambienceVolume = (float)_config.GetValue("audio", "ambience_volume", DEFAULT_AMBIENCE_VOLUME);
+				// Load volume settings (clamped: out-of-range values reach LinearToDb
+				// as garbage — a negative volume becomes NaN dB on the bus)
+				float masterVolume = Mathf.Clamp((float)_config.GetValue("audio", "master_volume", DEFAULT_MASTER_VOLUME), 0f, 100f);
+				float musicVolume = Mathf.Clamp((float)_config.GetValue("audio", "music_volume", DEFAULT_MUSIC_VOLUME), 0f, 100f);
+				float sfxVolume = Mathf.Clamp((float)_config.GetValue("audio", "sfx_volume", DEFAULT_SFX_VOLUME), 0f, 100f);
+				float ambienceVolume = Mathf.Clamp((float)_config.GetValue("audio", "ambience_volume", DEFAULT_AMBIENCE_VOLUME), 0f, 100f);
 
 				// Apply volume settings to audio buses
 				AudioServer.SetBusVolumeDb(_masterBus, Mathf.LinearToDb(masterVolume / 100));
@@ -260,10 +263,12 @@ public partial class SettingsManager : Node
 			}
 			catch (System.Exception ex)
 			{
-				Log.Error(MODULE_NAME, $"Settings file corrupted, resetting to defaults: {ex.Message}");
-				_config = new ConfigFile();
-				ApplyDefaults();
-				SaveDefaultSettings();
+				// Do NOT rewrite the file here: signals emitted above run consumer
+				// handlers synchronously, so this catch also fires for exceptions that
+				// have nothing to do with the file. Destroying the user's settings over
+				// a startup-order hiccup in a subscriber is far worse than running one
+				// session on partially applied values.
+				Log.Error(MODULE_NAME, $"Failed to apply saved settings: {ex.Message}");
 			}
 		}
 		else
@@ -453,6 +458,7 @@ public partial class SettingsManager : Node
 		{
 			case 0: // Windowed
 				GetWindow().Mode = Window.ModeEnum.Windowed;
+				GetWindow().Borderless = false; // undo borderless-fullscreen's flag
 				break;
 			case 1: // Borderless Fullscreen
 				GetWindow().Mode = Window.ModeEnum.Fullscreen;
@@ -549,52 +555,61 @@ public partial class SettingsManager : Node
 		return Mathf.DbToLinear(AudioServer.GetBusVolumeDb(_ambienceBus)) * 100;
 	}
 
-	// Helper methods for setting volume values
+	// Helper methods for setting volume values. Clamped: a negative volume would reach
+	// the bus as NaN dB via LinearToDb.
 	public void SetMasterVolume(float volume)
 	{
+		volume = Mathf.Clamp(volume, 0f, 100f);
 		AudioServer.SetBusVolumeDb(_masterBus, Mathf.LinearToDb(volume / 100));
 		SaveSetting("audio", "master_volume", volume);
 	}
 
 	public void SetMusicVolume(float volume)
 	{
+		volume = Mathf.Clamp(volume, 0f, 100f);
 		AudioServer.SetBusVolumeDb(_musicBus, Mathf.LinearToDb(volume / 100));
 		SaveSetting("audio", "music_volume", volume);
 	}
 
 	public void SetSfxVolume(float volume)
 	{
+		volume = Mathf.Clamp(volume, 0f, 100f);
 		AudioServer.SetBusVolumeDb(_sfxBus, Mathf.LinearToDb(volume / 100));
 		SaveSetting("audio", "sfx_volume", volume);
 	}
 
 	public void SetAmbienceVolume(float volume)
 	{
+		volume = Mathf.Clamp(volume, 0f, 100f);
 		AudioServer.SetBusVolumeDb(_ambienceBus, Mathf.LinearToDb(volume / 100));
 		SaveSetting("audio", "ambience_volume", volume);
 	}
 
-	// Mouse sensitivity methods
+	// Mouse sensitivity methods (clamped so a corrupted file cannot zero or explode
+	// look input)
 	public float GetMouseSensitivity()
 	{
-		return (float)_config.GetValue("input", "mouse_sensitivity", DEFAULT_MOUSE_SENSITIVITY);
+		return Mathf.Clamp((float)_config.GetValue("input", "mouse_sensitivity", DEFAULT_MOUSE_SENSITIVITY), 1f, 100f);
 	}
 
 	public void SetMouseSensitivity(float sensitivity)
 	{
+		sensitivity = Mathf.Clamp(sensitivity, 1f, 100f);
 		SaveSetting("input", "mouse_sensitivity", sensitivity);
 		EmitSignal(SignalName.MouseSensitivityChanged, sensitivity);
 		Log.Debug(MODULE_NAME, $"Mouse sensitivity set to: {sensitivity}%");
 	}
 
-	// FOV methods
+	// FOV methods (clamped: Camera3D rejects FOV outside (0, 180) and extreme values
+	// are unusable anyway)
 	public float GetFov()
 	{
-		return (float)_config.GetValue("video", "fov", DEFAULT_FOV);
+		return Mathf.Clamp((float)_config.GetValue("video", "fov", DEFAULT_FOV), 40f, 140f);
 	}
 
 	public void SetFov(float fov)
 	{
+		fov = Mathf.Clamp(fov, 40f, 140f);
 		SaveSetting("video", "fov", fov);
 		EmitSignal(SignalName.FovChanged, fov);
 		Log.Debug(MODULE_NAME, $"FOV set to: {fov}");
@@ -722,6 +737,7 @@ public partial class SettingsManager : Node
 
 	public void SetRenderScale(float scale)
 	{
+		scale = Mathf.Clamp(scale, 0.25f, 2.0f);
 		SaveSetting("video", "render_scale", scale);
 		ApplyRenderScale(scale);
 	}
@@ -1000,14 +1016,17 @@ public partial class SettingsManager : Node
 		EmitSignal(SignalName.DamageFlashChanged, enabled);
 	}
 
-	// HUD Scale
+	// HUD Scale. Clamped everywhere: a hand-edited hud_scale=0 would zero
+	// ContentScaleFactor and make the whole UI — including the settings menu that
+	// could undo it — unusable.
 	public float GetHudScale()
 	{
-		return (float)_config.GetValue("accessibility", "hud_scale", DEFAULT_HUD_SCALE);
+		return Mathf.Clamp((float)_config.GetValue("accessibility", "hud_scale", DEFAULT_HUD_SCALE), 0.5f, 2f);
 	}
 
 	public void SetHudScale(float scale)
 	{
+		scale = Mathf.Clamp(scale, 0.5f, 2f);
 		SaveSetting("accessibility", "hud_scale", scale);
 		ApplyHudScale(scale);
 		EmitSignal(SignalName.HudScaleChanged, scale);
@@ -1015,7 +1034,7 @@ public partial class SettingsManager : Node
 
 	private void ApplyHudScale(float scale)
 	{
-		GetTree().Root.ContentScaleFactor = scale;
+		GetTree().Root.ContentScaleFactor = Mathf.Clamp(scale, 0.5f, 2f);
 		Log.Debug(MODULE_NAME, $"HUD scale applied: {scale}");
 	}
 

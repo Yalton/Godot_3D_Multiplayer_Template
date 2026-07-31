@@ -1,14 +1,10 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://addons/dev_console/DevConsoleManager.cs" id="1_mgr"]
 [ext_resource type="Script" path="res://addons/dev_console/CoreCommandHandler.cs" id="2_core"]
-[ext_resource type="Script" path="res://Scripts/Debug/TemplateCommands.cs" id="3_template"]
 
 [node name="DevConsoleManager" type="Node"]
 script = ExtResource("1_mgr")
 
 [node name="CoreCommands" type="Node" parent="."]
 script = ExtResource("2_core")
-
-[node name="TemplateCommands" type="Node" parent="."]
-script = ExtResource("3_template")

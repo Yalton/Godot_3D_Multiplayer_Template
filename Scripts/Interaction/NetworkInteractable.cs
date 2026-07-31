@@ -17,6 +17,13 @@ public partial class NetworkInteractable : StaticBody3D
         Rpc(nameof(SetActive), !Active);
     }
 
+    /// <summary>Server-side: brings a late joiner up to date with the current state.</summary>
+    public void SyncStateTo(long peerId)
+    {
+        if (!Multiplayer.IsServer()) return;
+        RpcId(peerId, nameof(SetActive), Active);
+    }
+
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true,
         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void SetActive(bool active)

@@ -39,7 +39,9 @@ public partial class PlayerIdentityService : Node
 
     public void RequestAvatar(long steamId)
     {
-        if (steamId == 0 || _avatars.ContainsKey(steamId) || !_pending.Add(steamId) || _steam == null)
+        // _steam is checked before _pending.Add: the old order marked the id pending
+        // and then bailed, permanently blocking retries once Steam became available.
+        if (steamId == 0 || _steam == null || _avatars.ContainsKey(steamId) || !_pending.Add(steamId))
             return;
         _steam.Call("requestUserInformation", steamId, false);
         var avatarLarge = _steam.Get("AVATAR_LARGE").AsInt32();

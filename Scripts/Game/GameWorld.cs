@@ -32,8 +32,16 @@ public partial class GameWorld : Node3D
         Visible = true;
         if (!Multiplayer.IsServer()) return;
         foreach (var peerId in SessionManager.Instance.Players.Keys)
+        {
+            if (SkipSpawn(peerId)) continue;
             Rpc(nameof(SpawnPlayer), peerId, SpawnPosition(peerId));
+        }
     }
+
+    // A headless dedicated host stays in the roster but has no one at the keyboard;
+    // spawning it would leave a motionless capsule in every match.
+    private static bool SkipSpawn(long peerId) =>
+        peerId == 1 && SessionManager.Instance.IsDedicatedServer;
 
     private void ClearPlayers()
     {
@@ -53,7 +61,7 @@ public partial class GameWorld : Node3D
         if (!Multiplayer.IsServer()) return;
         foreach (var existingPeerId in SessionManager.Instance.Players.Keys)
         {
-            if (existingPeerId != joiningPeerId)
+            if (existingPeerId != joiningPeerId && !SkipSpawn(existingPeerId))
                 RpcId(joiningPeerId, nameof(SpawnPlayer), existingPeerId, SpawnPosition(existingPeerId));
         }
         Rpc(nameof(SpawnPlayer), joiningPeerId, SpawnPosition(joiningPeerId));
@@ -85,7 +93,14 @@ public partial class GameWorld : Node3D
 
     private static NetworkPlayer MakePlayer(long peerId)
     {
-        var player = new NetworkPlayer();
+        var player = new NetworkPlayer
+        {
+            // Match the named layers in project.godot: live on "Players" (2), collide
+            // with "World" (1), other players (2), and "Interactables" (4). The default
+            // layer/mask of 1 walks straight through every crate and switch.
+            CollisionLayer = 0b010,
+            CollisionMask = 0b111
+        };
         var collision = new CollisionShape3D
         {
             Shape = new CapsuleShape3D { Radius = 0.45f, Height = 1.8f },

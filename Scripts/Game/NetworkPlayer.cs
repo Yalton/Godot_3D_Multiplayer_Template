@@ -27,6 +27,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private float _serverYaw;
     private uint _nextInputSequence;
     private uint _lastReceivedSequence;
+    private (Vector3 Position, Vector3 Velocity, float Yaw, float Error)? _pendingCorrection;
     private Camera3D _camera = null!;
     private Node3D _head = null!;
     private Label3D _nameLabel = null!;
@@ -101,6 +102,7 @@ public partial class NetworkPlayer : CharacterBody3D
         }
         else if (IsLocalPlayer)
         {
+            ApplyPendingCorrection();
             var local = ReadLocalInput();
             var sequence = ++_nextInputSequence;
             _pendingInputs.Add(new PredictedInput(sequence, local.Move, local.Jump, _yaw, step));
@@ -221,6 +223,11 @@ public partial class NetworkPlayer : CharacterBody3D
         if (!RpcSecurity.RequireSender(sender, PeerId, nameof(SubmitInput)) ||
             !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(SubmitInput),
                 SessionManager.SessionState.Playing)) return;
+        if (!move.IsFinite() || !float.IsFinite(yaw))
+        {
+            RpcSecurity.Reject(nameof(SubmitInput), sender, "non-finite input values");
+            return;
+        }
         if (sequence <= _lastReceivedSequence) return;
         _lastReceivedSequence = sequence;
         _serverMoveInput = move.LimitLength(1f);
@@ -236,23 +243,30 @@ public partial class NetworkPlayer : CharacterBody3D
         {
             _pendingInputs.RemoveAll(input => input.Sequence <= acknowledgedInput);
             var error = GlobalPosition.DistanceTo(position);
-            if (error > ReconcileThreshold)
-            {
-                // Rewind to the acknowledged server result, then replay inputs the server has
-                // not processed yet. Large errors snap; small ones blend after replay.
-                var predictedBeforeRewind = GlobalPosition;
-                GlobalPosition = position;
-                Velocity = velocity;
-                Rotation = new Vector3(Rotation.X, yaw, Rotation.Z);
-                foreach (var input in _pendingInputs)
-                    ApplyMovement(input.Move, input.Jump, input.Yaw, input.Delta);
-                if (error < HardSnapThreshold)
-                    GlobalPosition = predictedBeforeRewind.Lerp(GlobalPosition, 0.35f);
-            }
+            if (error > ReconcileThreshold) _pendingCorrection = (position, velocity, yaw, error);
             return;
         }
         _targetPosition = position;
         _targetVelocity = velocity;
         _targetYaw = yaw;
+    }
+
+    // Rewind to the acknowledged server result, then replay inputs the server has not
+    // processed yet. Large errors snap; small ones blend after replay. Must run inside a
+    // physics frame: MoveAndSlide derives its step from the current frame type, so
+    // replaying during RPC delivery (an idle frame) would advance each replayed input by
+    // the render delta instead of the recorded physics delta.
+    private void ApplyPendingCorrection()
+    {
+        if (_pendingCorrection is not { } correction) return;
+        _pendingCorrection = null;
+        var predictedBeforeRewind = GlobalPosition;
+        GlobalPosition = correction.Position;
+        Velocity = correction.Velocity;
+        Rotation = new Vector3(Rotation.X, correction.Yaw, Rotation.Z);
+        foreach (var input in _pendingInputs)
+            ApplyMovement(input.Move, input.Jump, input.Yaw, input.Delta);
+        if (correction.Error < HardSnapThreshold)
+            GlobalPosition = predictedBeforeRewind.Lerp(GlobalPosition, 0.35f);
     }
 }

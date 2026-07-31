@@ -1,5 +1,6 @@
 using Godot;
 using Godot.Collections;
+using MultiplayerTemplate.DebugTools;
 using MultiplayerTemplate.Network;
 using SettingsKit;
 using InputRemapKit;
@@ -16,6 +17,7 @@ public partial class Main : Node
 	private VBoxContainer _roster = null!;
 	private Button _ready = null!;
 	private Button _start = null!;
+	private Button _end = null!;
 	private Button _invite = null!;
 	private OptionButton _privacy = null!;
 	private LineEdit _name = null!;
@@ -85,7 +87,7 @@ public partial class Main : Node
 		_steamList = new VBoxContainer();
 		menu.AddChild(_steamList);
 		menu.AddChild(Button("Options", () => ShowOptions(true)));
-		menu.AddChild(Button("Quit", () => GetTree().Quit()));
+		menu.AddChild(Button("Quit", QuitGame));
 		_status = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
 		menu.AddChild(_status);
 
@@ -114,6 +116,9 @@ public partial class Main : Node
 		lobby.AddChild(_ready);
 		_start = Button("Start Match", SessionManager.Instance.StartMatch);
 		lobby.AddChild(_start);
+		_end = Button("End Match", SessionManager.Instance.EndMatch);
+		_end.Visible = false;
+		lobby.AddChild(_end);
 		lobby.AddChild(Button("Options", () => ShowOptions(true)));
 		lobby.AddChild(Button("Disconnect", () => SessionManager.Instance.DisconnectSession()));
 
@@ -124,6 +129,9 @@ public partial class Main : Node
 		AddChild(tools);
 		var consoleScene = ResourceLoader.Load<PackedScene>("res://addons/dev_console/DevConsole.tscn");
 		tools.AddChild(consoleScene.Instantiate());
+		// Game-specific console commands live with the game, not inside the portable
+		// addon scene — the addon must not reference project scripts.
+		tools.AddChild(new TemplateCommands());
 	}
 
 	private Control BuildOptions()
@@ -310,6 +318,14 @@ public partial class Main : Node
 		SessionManager.Instance.ServerName = $"{value}'s Game";
 	}
 
+	// Quit must tear down the session first; a bare Quit() skips the WM-close path and
+	// remote peers only notice via timeout.
+	private void QuitGame()
+	{
+		SessionManager.Instance.DisconnectSession(false);
+		GetTree().Quit();
+	}
+
 	private void HostLan() { CaptureIdentity(); SessionManager.Instance.HostEnet(); }
 	private void JoinIp() { CaptureIdentity(); SessionManager.Instance.JoinEnet(_address.Text); }
 	private void HostSteam() { CaptureIdentity(); SessionManager.Instance.HostSteam(); }
@@ -396,7 +412,7 @@ public partial class Main : Node
 		var ownReady = players.TryGetValue(ownId, out var own)
 					   && own.GetValueOrDefault("ready", false).AsBool();
 		_ready.Text = ownReady ? "Unready" : "Ready";
-		_start.Visible = Multiplayer.HasMultiplayerPeer() && Multiplayer.IsServer();
+		RefreshMatchButtons();
 		UpdateSteamSocialControls();
 	}
 
@@ -481,17 +497,27 @@ public partial class Main : Node
 		}
 	}
 
+	private void RefreshMatchButtons()
+	{
+		var isServer = Multiplayer.HasMultiplayerPeer() && Multiplayer.IsServer();
+		_start.Visible = isServer && !SessionManager.Instance.MatchActive;
+		_end.Visible = isServer && SessionManager.Instance.MatchActive;
+		_ready.Visible = !SessionManager.Instance.MatchActive;
+	}
+
 	private void OnMatchStarted()
 	{
 		_menu.Visible = false;
 		_lobby.Visible = false;
 		_options.Visible = false;
+		RefreshMatchButtons();
 		LocalInputContext.Instance.Clear();
 	}
 
 	private void OnMatchEnded()
 	{
 		if (Multiplayer.HasMultiplayerPeer()) _lobby.Visible = true;
+		RefreshMatchButtons();
 		LocalInputContext.Instance.SetBlocked("session_ui", true);
 	}
 }

@@ -20,6 +20,29 @@ public partial class TemplateCommands : BaseCommandHandler
         RegisterCommand("join_ip", JoinIp, "Joins an ENet host. Usage: join_ip <address> [port]");
         RegisterCommand("disconnect", Disconnect, "Disconnects the current multiplayer session.");
         RegisterCommand("net_clock", NetClock, "Shows synchronized time, server tick, ping, jitter, and loss.");
+        RegisterCommand("start_match", StartMatch, "Host only: starts the match once every client is ready.");
+        RegisterCommand("end_match", EndMatch, "Host only: ends the match and returns everyone to the lobby.");
+    }
+
+    private void StartMatch(string[] args)
+    {
+        if (!RequireHost()) return;
+        SessionManager.Instance.StartMatch();
+        OutputSystem("Match start requested.");
+    }
+
+    private void EndMatch(string[] args)
+    {
+        if (!RequireHost()) return;
+        SessionManager.Instance.EndMatch();
+        OutputSystem("Returning to lobby.");
+    }
+
+    private bool RequireHost()
+    {
+        if (Multiplayer.HasMultiplayerPeer() && Multiplayer.IsServer()) return true;
+        OutputError("Only the host can run this command.");
+        return false;
     }
 
     private void NetStatus(string[] args)

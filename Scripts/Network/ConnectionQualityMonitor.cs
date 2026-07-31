@@ -64,6 +64,13 @@ public partial class ConnectionQualityMonitor : CanvasLayer
         NetworkClock.Instance.ProbeSent += OnProbeSent;
         NetworkClock.Instance.SampleReceived += OnSampleReceived;
         SessionManager.Instance.MatchEnded += Reset;
+        Multiplayer.PeerDisconnected += OnPeerDisconnected;
+    }
+
+    private void OnPeerDisconnected(long peerId)
+    {
+        _reportLimiter.Forget(peerId);
+        _peerQuality.Remove(peerId);
     }
 
     public override void _UnhandledInput(InputEvent @event)

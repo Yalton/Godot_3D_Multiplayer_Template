@@ -50,7 +50,7 @@ mesh = SubResource("FloorMesh")
 [node name="CrateA" type="RigidBody3D" parent="PhysicsProps"]
 position = Vector3(2, 1, -2)
 collision_layer = 4
-collision_mask = 3
+collision_mask = 7
 script = ExtResource("2")
 Prompt = "Pick up crate"
 
@@ -64,7 +64,7 @@ material_override = SubResource("PropMaterial")
 [node name="CrateB" type="RigidBody3D" parent="PhysicsProps"]
 position = Vector3(-2, 1, -2)
 collision_layer = 4
-collision_mask = 3
+collision_mask = 7
 script = ExtResource("2")
 Prompt = "Pick up crate"
 
