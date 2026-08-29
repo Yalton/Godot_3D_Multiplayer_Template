@@ -1,4 +1,5 @@
 using Godot;
+using MultiplayerTemplate.Avatar;
 using MultiplayerTemplate.Network;
 using SettingsKit;
 
@@ -92,17 +93,7 @@ public partial class GameWorld : Node3D
             Position = new Vector3(0, 0.9f, 0)
         };
         player.AddChild(collision);
-        var material = new StandardMaterial3D
-        {
-            AlbedoColor = Color.FromHsv(Mathf.PosMod(peerId * 0.19f, 1f), 0.7f, 0.9f)
-        };
-        var mesh = new MeshInstance3D
-        {
-            Mesh = new CapsuleMesh { Radius = 0.45f, Height = 1.8f },
-            Position = new Vector3(0, 0.9f, 0),
-            MaterialOverride = material
-        };
-        player.AddChild(mesh);
+        player.AttachAvatar(AvatarFactory.Build(peerId));
         var head = new Node3D { Name = "Head", Position = new Vector3(0, 1.55f, 0) };
         player.AddChild(head);
         var camera = new Camera3D { Fov = SettingsManager.Instance.GetFov() };

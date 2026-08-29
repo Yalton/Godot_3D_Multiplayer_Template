@@ -1,5 +1,6 @@
 using Godot;
 using SettingsKit;
+using MultiplayerTemplate.Avatar;
 using MultiplayerTemplate.Communication;
 using MultiplayerTemplate.Interaction;
 using MultiplayerTemplate.UI;
@@ -27,6 +28,10 @@ public partial class NetworkPlayer : CharacterBody3D
     private float _serverYaw;
     private uint _nextInputSequence;
     private uint _lastReceivedSequence;
+    private AvatarRig? _avatar;
+    private float _airborneSeconds;
+    private bool _wasGrounded = true;
+    private bool _targetGrounded = true;
     private Camera3D _camera = null!;
     private Node3D _head = null!;
     private Label3D _nameLabel = null!;
@@ -52,6 +57,15 @@ public partial class NetworkPlayer : CharacterBody3D
 
     public Vector3 HoldPosition => _head.GlobalPosition - _head.GlobalBasis.Z * 2.2f;
     public Vector3 EyePosition => _camera.GlobalPosition;
+
+    public AvatarRig? Avatar => _avatar;
+
+    public void AttachAvatar(AvatarRig? rig)
+    {
+        if (rig == null) return;
+        _avatar = rig;
+        AddChild(rig);
+    }
 
     public override void _Ready()
     {
@@ -117,6 +131,7 @@ public partial class NetworkPlayer : CharacterBody3D
                 Rotation.Z);
             Velocity = _targetVelocity;
         }
+        UpdateAvatarAnimation(step);
     }
 
     private (Vector2 Move, bool Jump) ReadLocalInput() =>
@@ -204,12 +219,26 @@ public partial class NetworkPlayer : CharacterBody3D
         MoveAndSlide();
     }
 
+    private void UpdateAvatarAnimation(float delta)
+    {
+        if (_avatar == null) return;
+        // Remote peers never run MoveAndSlide, so their IsOnFloor() is meaningless;
+        // the server tells them whether the character is grounded.
+        var grounded = Multiplayer.IsServer() || IsLocalPlayer ? IsOnFloor() : _targetGrounded;
+        var airborne = grounded ? _airborneSeconds : _airborneSeconds + delta;
+        var planarSpeed = new Vector2(Velocity.X, Velocity.Z).Length();
+        _avatar.SetLocomotion(
+            LocomotionSolver.Solve(planarSpeed, grounded, Velocity.Y, airborne, _wasGrounded));
+        _airborneSeconds = grounded ? 0f : airborne;
+        _wasGrounded = grounded;
+    }
+
     private void SendSnapshots(double delta)
     {
         _snapshotAccumulator += delta;
         if (_snapshotAccumulator < 1.0 / SnapshotRate) return;
         _snapshotAccumulator = 0;
-        Rpc(nameof(ReceiveSnapshot), GlobalPosition, Velocity, Rotation.Y, _lastReceivedSequence);
+        Rpc(nameof(ReceiveSnapshot), GlobalPosition, Velocity, Rotation.Y, IsOnFloor(), _lastReceivedSequence);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
@@ -230,7 +259,8 @@ public partial class NetworkPlayer : CharacterBody3D
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
         TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 1)]
-    private void ReceiveSnapshot(Vector3 position, Vector3 velocity, float yaw, uint acknowledgedInput)
+    private void ReceiveSnapshot(
+        Vector3 position, Vector3 velocity, float yaw, bool grounded, uint acknowledgedInput)
     {
         if (IsLocalPlayer)
         {
@@ -254,5 +284,6 @@ public partial class NetworkPlayer : CharacterBody3D
         _targetPosition = position;
         _targetVelocity = velocity;
         _targetYaw = yaw;
+        _targetGrounded = grounded;
     }
 }
