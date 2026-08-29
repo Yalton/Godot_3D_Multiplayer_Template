@@ -53,13 +53,13 @@ public partial class NetworkSmoke : Node
         {
             SessionManager.Instance.PlayerName = "SmokeHost";
             SessionManager.Instance.HostEnet(Port);
-            FinishAfter(7, FinishServer);
+            FinishAfter(16, FinishServer);
         }
         else if (_role == "client")
         {
             SessionManager.Instance.PlayerName = _clientName;
             SessionManager.Instance.JoinEnet("127.0.0.1", Port);
-            FinishAfter(5, FinishClient);
+            FinishAfter(9, FinishClient);
         }
         else if (_role == "incompatible")
         {
@@ -67,7 +67,7 @@ public partial class NetworkSmoke : Node
             SessionManager.Instance.ProtocolVersionOverrideForTesting =
                 NetworkBuildInfo.ProtocolVersion + 1;
             SessionManager.Instance.JoinEnet("127.0.0.1", Port);
-            FinishAfter(2, FinishIncompatible);
+            FinishAfter(3, FinishIncompatible);
         }
         else if (_role == "host-loss-server")
         {
@@ -79,7 +79,7 @@ public partial class NetworkSmoke : Node
         {
             SessionManager.Instance.PlayerName = "HostLossClient";
             SessionManager.Instance.JoinEnet("127.0.0.1", Port + 1);
-            FinishAfter(4, FinishHostLossClient);
+            FinishAfter(5, FinishHostLossClient);
         }
         else if (_role == "dedicated")
         {
