@@ -29,6 +29,12 @@ public sealed class KickPolicyTests
     }
 
     [Fact]
+    public void HostMayNotKickItselfWhenItIsNotTheServerPeer()
+    {
+        Assert.False(KickPolicy.CanKick(5, 5, true, true));
+    }
+
+    [Fact]
     public void ServerPeerIsNeverAValidTarget()
     {
         Assert.False(KickPolicy.CanKick(99, 1, true, true));
