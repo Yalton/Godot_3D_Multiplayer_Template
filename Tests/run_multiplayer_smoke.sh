@@ -59,6 +59,24 @@ if (( result == 0 )); then
     --server --port=18912 --smoke-role=dedicated >"$loss_dir/dedicated.log" 2>&1 || result=1
   grep -h "SMOKE" "$loss_dir/dedicated.log" || true
   if grep -E "ERROR:|SMOKE .* FAIL" "$loss_dir/dedicated.log"; then result=1; fi
+
+  kick_dir="$(mktemp -d)"
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=kick-server >"$kick_dir/server.log" 2>&1 &
+  kick_server=$!
+  sleep 0.3
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=kick-target >"$kick_dir/target.log" 2>&1 &
+  kick_target=$!
+  sleep 0.2
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=kick-rogue >"$kick_dir/rogue.log" 2>&1 &
+  kick_rogue=$!
+  wait "$kick_server" || result=1
+  wait "$kick_target" || result=1
+  wait "$kick_rogue" || result=1
+  grep -h "SMOKE" "$kick_dir"/*.log || true
+  if grep -E "ERROR:|SMOKE .* FAIL" "$kick_dir"/*.log; then result=1; fi
 fi
 
 if (( result == 0 )); then
