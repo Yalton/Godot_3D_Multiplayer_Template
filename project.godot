@@ -99,6 +99,10 @@ toggle_dev_console={
 ]
 }
 
+[template]
+
+avatar/scene_path=""
+
 [layer_names]
 
 3d_physics/layer_1="World"
