@@ -18,7 +18,7 @@
 - Every file keeps its own existing indentation. `Scripts/UI/Main.cs` uses **tabs**; every other file under `Scripts/` uses **4 spaces**.
 - The server is always multiplayer peer `1`. Derive identity from `Multiplayer.GetRemoteSenderId()`, never from a client-supplied peer id.
 - Every client request RPC must pass through `RpcSecurity` (server check, sender check, session-state check) and be rate limited via `RpcRateLimiter`.
-- `NetworkBuildInfo.ProtocolVersion` is incremented exactly once for this whole phase, in Task 5. Do not bump it again in later tasks.
+- `NetworkBuildInfo.ProtocolVersion` is incremented exactly once for this whole phase, in Task 5 (from 5 to 6 — a pre-task fix on this branch already moved it from 4 to 5 for an unrelated ENet channel change). Do not bump it again in later tasks.
 - Client-only visual systems must no-op when `DisplayServer.GetName() == "headless"`, following the guard in `Scripts/Communication/PositionalVoiceChat.cs:29`.
 - Full suite entry point: `bash Tests/run_all_tests.sh`.
 
