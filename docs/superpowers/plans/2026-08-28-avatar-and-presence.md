@@ -1351,6 +1351,9 @@ public static class AvatarFactory
 
     private static AvatarRig? BuildConfigured()
     {
+        // DebugLogger drops messages for unregistered modules, and a static class has no
+        // _Ready to register in, so the warnings below would otherwise go nowhere.
+        DebugLogger.Instance.RegisterModule(LogModule, true);
         var configured = ProjectSettings.GetSetting(ScenePathSetting, "").AsString();
         if (string.IsNullOrWhiteSpace(configured)) return null;
         if (!ResourceLoader.Exists(configured))
@@ -1365,7 +1368,10 @@ public static class AvatarFactory
                 LogModule, $"{ScenePathSetting}='{configured}' is not a PackedScene; using the built-in rig");
             return null;
         }
-        if (scene.Instantiate() is AvatarRig rig) return rig;
+        // Node is not RefCounted: a rejected instance must be freed or it leaks.
+        var instance = scene.Instantiate();
+        if (instance is AvatarRig rig) return rig;
+        instance.QueueFree();
         DebugLogger.Instance.Warning(
             LogModule, $"{ScenePathSetting}='{configured}' root does not derive from AvatarRig; using the built-in rig");
         return null;
