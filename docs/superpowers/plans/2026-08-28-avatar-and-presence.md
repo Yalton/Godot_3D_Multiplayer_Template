@@ -1091,19 +1091,20 @@ public partial class BlockmanRig : AvatarRig
 {
     private const string LogModule = "Avatar";
     private const string LibraryName = "template";
-    private const string ActionNode = "parameters/action/animation";
     private const string ActionRequest = "parameters/action_shot/request";
     private const string ActionActive = "parameters/action_shot/active";
     private const string GroundBlend = "parameters/locomotion/ground/blend_position";
     private const string StatePlayback = "parameters/locomotion/playback";
 
     private Skeleton3D _skeleton = null!;
+    private AnimationNodeAnimation _actionClip = null!;
     private AnimationPlayer _player = null!;
     private AnimationTree _tree = null!;
     private AnimationLibrary _library = null!;
     private readonly System.Collections.Generic.Dictionary<AvatarSlot, Node3D> _attachments = new();
     private readonly System.Collections.Generic.List<StandardMaterial3D> _materials = new();
     private LocomotionState _currentState = LocomotionState.Idle;
+    private bool _travelled;
 
     public override bool ActionPlaying => (bool)_tree.Get(ActionActive);
 
@@ -1118,7 +1119,10 @@ public partial class BlockmanRig : AvatarRig
     public override void SetLocomotion(LocomotionResult state)
     {
         _tree.Set(GroundBlend, state.Blend);
-        if (state.State == _currentState && !state.LandTriggered) return;
+        // The first call must travel unconditionally: a freshly activated state machine
+        // sits at its internal Start node, so an idle character would never animate.
+        if (_travelled && state.State == _currentState && !state.LandTriggered) return;
+        _travelled = true;
         _currentState = state.State;
         if (_tree.Get(StatePlayback).As<AnimationNodeStateMachinePlayback>() is not { } playback) return;
         playback.Travel(StateNodeName(state.State));
@@ -1131,7 +1135,9 @@ public partial class BlockmanRig : AvatarRig
             DebugLogger.Instance.Warning(LogModule, $"Avatar has no action clip '{clip}'; ignoring");
             return;
         }
-        _tree.Set(ActionNode, $"{LibraryName}/{clip}");
+        // AnimationNodeAnimation exposes no runtime "animation" parameter, so this must be
+        // set on the node instance directly; going through _tree.Set is a silent no-op.
+        _actionClip.Animation = $"{LibraryName}/{clip}";
         _tree.Set(ActionRequest, (int)AnimationNodeOneShot.OneShotRequest.Fire);
     }
 
@@ -1157,9 +1163,11 @@ public partial class BlockmanRig : AvatarRig
     {
         _skeleton = new Skeleton3D { Name = ProceduralAnimationLibrary.SkeletonNodeName };
         AddChild(_skeleton);
-        var hips = AddBone("hips", -1, new Vector3(0, 0.95f, 0));
-        var spine = AddBone("spine", hips, new Vector3(0, 0.35f, 0));
-        AddBone("head", spine, new Vector3(0, 0.35f, 0));
+        // These three offsets are chosen so the assembled body spans exactly y 0.0 to 1.80,
+        // matching the CapsuleShape3D in GameWorld.MakePlayer. Do not adjust them casually.
+        var hips = AddBone("hips", -1, new Vector3(0, 0.955f, 0));
+        var spine = AddBone("spine", hips, new Vector3(0, 0.28f, 0));
+        AddBone("head", spine, new Vector3(0, 0.225f, 0));
         AddBone("upperarm.L", spine, new Vector3(0.3f, 0.22f, 0));
         AddBone("upperarm.R", spine, new Vector3(-0.3f, 0.22f, 0));
         var thighL = AddBone("thigh.L", hips, new Vector3(0.14f, -0.05f, 0));
@@ -1265,7 +1273,8 @@ public partial class BlockmanRig : AvatarRig
         var oneShot = new AnimationNodeOneShot { FadeInTime = 0.1f, FadeOutTime = 0.15f };
         var root = new AnimationNodeBlendTree();
         root.AddNode("locomotion", locomotion, new Vector2(0, 0));
-        root.AddNode("action", new AnimationNodeAnimation(), new Vector2(0, 140));
+        _actionClip = new AnimationNodeAnimation();
+        root.AddNode("action", _actionClip, new Vector2(0, 140));
         root.AddNode("action_shot", oneShot, new Vector2(260, 60));
         root.ConnectNode("action_shot", 0, "locomotion");
         root.ConnectNode("action_shot", 1, "action");
