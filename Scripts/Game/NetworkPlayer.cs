@@ -33,7 +33,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private bool _wasGrounded = true;
     private bool _targetGrounded = true;
     private PlayerCamera _view = null!;
-    private Label3D _nameLabel = null!;
+    private PlayerNameplate _nameLabel = null!;
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
 
@@ -43,7 +43,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private bool IsLocalPlayer =>
         Multiplayer.HasMultiplayerPeer() && Multiplayer.GetUniqueId() == PeerId;
 
-    public void Setup(long id, PlayerCamera view, Label3D nameLabel)
+    public void Setup(long id, PlayerCamera view, PlayerNameplate nameLabel)
     {
         PeerId = id;
         Name = id.ToString();
@@ -68,7 +68,7 @@ public partial class NetworkPlayer : CharacterBody3D
     public override void _Ready()
     {
         AddToGroup("network_players");
-        _nameLabel.Text = Network.SessionManager.Instance.DisplayName(PeerId);
+        _nameLabel.Initialize(PeerId, IsLocalPlayer);
         _view.Initialize(IsLocalPlayer, _avatar);
         if (IsLocalPlayer) LocalInputContext.Instance.RefreshMouseMode();
         _targetPosition = GlobalPosition;

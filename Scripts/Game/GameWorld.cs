@@ -95,13 +95,7 @@ public partial class GameWorld : Node3D
         player.AttachAvatar(AvatarFactory.Build(peerId));
         var view = new PlayerCamera { Position = new Vector3(0, 1.55f, 0) };
         player.AddChild(view);
-        var nameLabel = new Label3D
-        {
-            Position = new Vector3(0, 2.25f, 0),
-            Billboard = Godot.BaseMaterial3D.BillboardModeEnum.Enabled,
-            NoDepthTest = true,
-            FontSize = 32
-        };
+        var nameLabel = new PlayerNameplate { Position = new Vector3(0, 2.25f, 0) };
         player.AddChild(nameLabel);
         player.Setup(peerId, view, nameLabel);
         return player;
