@@ -15,6 +15,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private const float SnapshotRate = 20f;
     private const float ReconcileThreshold = 0.12f;
     private const float HardSnapThreshold = 2.5f;
+    private const float YawIdleEpsilon = 0.01f;
 
     public long PeerId { get; private set; } = 1;
     private float _yaw;
@@ -36,6 +37,8 @@ public partial class NetworkPlayer : CharacterBody3D
     private PlayerNameplate _nameLabel = null!;
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
+    private double _lastInputSeconds;
+    private bool _afk;
 
     private readonly record struct PredictedInput(
         uint Sequence, Vector2 Move, bool Jump, float Yaw, float Delta);
@@ -67,6 +70,7 @@ public partial class NetworkPlayer : CharacterBody3D
 
     public override void _Ready()
     {
+        _lastInputSeconds = Time.GetTicksMsec() / 1000.0;
         AddToGroup("network_players");
         _nameLabel.Initialize(PeerId, IsLocalPlayer);
         _view.Initialize(IsLocalPlayer, _avatar);
@@ -109,6 +113,7 @@ public partial class NetworkPlayer : CharacterBody3D
             if (PeerId == Multiplayer.GetUniqueId())
             {
                 var local = ReadLocalInput();
+                NoteActivity(local.Move, local.Jump, _yaw);
                 _serverMoveInput = local.Move;
                 _serverJump = local.Jump;
                 _serverYaw = _yaw;
@@ -117,6 +122,7 @@ public partial class NetworkPlayer : CharacterBody3D
             ApplyMovement(_serverMoveInput, _serverJump, _serverYaw, step);
             _serverJump = false;
             SendSnapshots(delta);
+            UpdateAfk();
         }
         else if (IsLocalPlayer)
         {
@@ -239,6 +245,27 @@ public partial class NetworkPlayer : CharacterBody3D
         _wasGrounded = grounded;
     }
 
+    private void NoteActivity(Vector2 move, bool jump, float yaw)
+    {
+        if (move.LengthSquared() <= 0f && !jump && Mathf.Abs(Mathf.AngleDifference(yaw, _serverYaw)) < YawIdleEpsilon)
+            return;
+        _lastInputSeconds = Time.GetTicksMsec() / 1000.0;
+    }
+
+    private void UpdateAfk()
+    {
+        if (!Multiplayer.IsServer()) return;
+        var idleSeconds = Time.GetTicksMsec() / 1000.0 - _lastInputSeconds;
+        var afk = AfkPolicy.Evaluate(idleSeconds, AfkPolicy.DefaultThresholdSeconds, _afk);
+        if (afk != _afk)
+        {
+            _afk = afk;
+            SessionManager.Instance.SetAfkServer(PeerId, afk);
+        }
+        if (PeerId != 1 && AfkPolicy.ShouldKick(idleSeconds, SessionManager.Instance.AfkKickSeconds))
+            SessionManager.Instance.RequestKick(PeerId, "Idle for too long.");
+    }
+
     private void SendSnapshots(double delta)
     {
         _snapshotAccumulator += delta;
@@ -258,6 +285,7 @@ public partial class NetworkPlayer : CharacterBody3D
                 SessionManager.SessionState.Playing)) return;
         if (sequence <= _lastReceivedSequence) return;
         _lastReceivedSequence = sequence;
+        NoteActivity(move, jump, yaw);
         _serverMoveInput = move.LimitLength(1f);
         _serverJump |= jump;
         _serverYaw = Mathf.Wrap(yaw, -Mathf.Pi, Mathf.Pi);
