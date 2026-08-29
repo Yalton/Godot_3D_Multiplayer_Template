@@ -561,29 +561,25 @@ Append to `MultiplayerTemplate.Tests/PlayerIdentityTests.cs` inside the existing
 
 ```csharp
     [Fact]
-    public void AfkSurvivesADictionaryRoundTrip()
+    public void AfkDefaultsToPresent()
     {
-        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true);
-        var restored = PlayerIdentity.FromDictionary(7, identity.ToDictionary());
-        Assert.True(restored.Afk);
-        Assert.True(restored.Ready);
-        Assert.Equal("Ann", restored.DisplayName);
+        Assert.False(new PlayerIdentity(7, "Ann", "LAN", 0, false, true).Afk);
     }
 
     [Fact]
-    public void PayloadWithoutAnAfkKeyDefaultsToPresent()
+    public void AfkIsCarriedOnTheRecord()
     {
-        var legacy = new Godot.Collections.Dictionary
-        {
-            ["name"] = "Bo",
-            ["platform"] = "LAN",
-            ["steam_id"] = 0L,
-            ["is_host"] = false,
-            ["ready"] = false
-        };
-        Assert.False(PlayerIdentity.FromDictionary(9, legacy).Afk);
+        Assert.True(new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true).Afk);
     }
 ```
+
+**Do NOT write an xUnit test that calls `ToDictionary()` or constructs a
+`Godot.Collections.Dictionary`.** Those types require the CLR to be hosted inside the Godot
+engine; under `dotnet test` they crash the test host process with a segmentation fault, which
+aborts the entire run rather than failing one test. The existing tests in this file pass
+precisely because they only construct the record. Dictionary round-trip behaviour — including
+an older payload with no `"afk"` key defaulting to false — is covered against the real engine
+in `Tests/NetworkSmoke.cs` (Task 19), not here.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -648,10 +644,14 @@ In `Scripts/Network/PlayerIdentityService.cs:35`, extend the fallback:
 
 Bump the protocol in `Scripts/Network/NetworkBuildInfo.cs` — increase `ProtocolVersion` by exactly one. This single bump covers the roster's new `afk` key (this task), the snapshot's new `grounded` field (Task 12), and the new kick RPC (Task 7).
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `dotnet test MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj --verbosity minimal`
 Expected: PASS — the whole xUnit suite, including the pre-existing identity tests.
+
+Run: `bash Tests/run_multiplayer_smoke.sh`
+Expected: `MULTIPLAYER HARNESS PASS`. This task changes a replicated payload and the protocol
+version, so the integration harness is the gate that actually exercises them.
 
 - [ ] **Step 5: Commit**
 
@@ -2496,6 +2496,38 @@ Observe it on the client, at the top of `OnRoster`:
             _sawAfkCleared |= _sawAfkFlag && !afk;
         }
 ```
+
+Also add the `PlayerIdentity` dictionary round-trip here, since it cannot run under xUnit —
+`Godot.Collections.Dictionary` requires a hosted engine and crashes the `dotnet test` host.
+Add the field `private bool _identityRoundTripPassed;` and this check:
+
+```csharp
+    private static bool CheckIdentityRoundTrip()
+    {
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true);
+        var restored = PlayerIdentity.FromDictionary(7, identity.ToDictionary());
+        var legacy = new Godot.Collections.Dictionary
+        {
+            ["name"] = "Bo",
+            ["platform"] = "LAN",
+            ["steam_id"] = 0L,
+            ["is_host"] = false,
+            ["ready"] = false
+        };
+        return restored.Afk && restored.Ready && restored.DisplayName == "Ann" &&
+               !PlayerIdentity.FromDictionary(9, legacy).Afk;
+    }
+```
+
+Call it in `_Ready` beside the existing `_securityHelpersPassed = CheckSecurityHelpers();`
+line:
+
+```csharp
+        _identityRoundTripPassed = CheckIdentityRoundTrip();
+```
+
+Require it in both the `FinishServer` and `FinishClient` success expressions, and add
+`identityRoundTrip={_identityRoundTripPassed}` to both failure messages.
 
 - [ ] **Step 4: Scope the existing ready/start logic to the main roles**
 
