@@ -14,12 +14,27 @@ public partial class PositionalVoiceChat : Node
 {
     public static PositionalVoiceChat Instance { get; private set; } = null!;
     public bool ClientCaptureEnabled => _captureAvailable;
+
+    public bool IsSpeaking(long peerId) =>
+        _speaking.IsSpeaking(peerId, Time.GetTicksMsec() / 1000.0);
+
+    public float GetPeerVolume(long peerId) =>
+        PlayerIdentityService.Instance.GetVoiceVolume(PlayerIdentityService.Instance.Get(peerId));
+
+    public void SetPeerVolume(long peerId, float linear)
+    {
+        var clamped = VoiceVolumePolicy.Clamp(linear);
+        PlayerIdentityService.Instance.SetVoiceVolume(PlayerIdentityService.Instance.Get(peerId), clamped);
+        if (_speakers.TryGetValue(peerId, out var speaker))
+            speaker.VolumeDb = VoiceVolumePolicy.ToDecibels(clamped);
+    }
     private const int CaptureFrames = 960;
     private const int PlaybackRate = 16000;
     private AudioEffectCapture? _capture;
     private AudioStreamPlayer? _micPump;
     private readonly System.Collections.Generic.Dictionary<long, AudioStreamPlayer3D> _speakers = new();
     private readonly RpcRateLimiter _rateLimiter = new();
+    private readonly SpeakingTracker _speaking = new();
     private bool _captureAvailable;
 
     public override void _Ready()
@@ -104,6 +119,7 @@ public partial class PositionalVoiceChat : Node
     private void PlayPacket(long peerId, byte[] pcm)
     {
         if (peerId == Multiplayer.GetUniqueId() || IsLocallyMuted(peerId) || pcm.Length % 2 != 0) return;
+        _speaking.NotePacket(peerId, Time.GetTicksMsec() / 1000.0);
         var player = EnsureSpeaker(peerId);
         if (player.GetStreamPlayback() is not AudioStreamGeneratorPlayback playback) return;
         var frames = new Vector2[pcm.Length / 2];
@@ -126,6 +142,7 @@ public partial class PositionalVoiceChat : Node
             MaxDistance = 35f,
             AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.InverseDistance
         };
+        speaker.VolumeDb = VoiceVolumePolicy.ToDecibels(GetPeerVolume(peerId));
         AddChild(speaker);
         speaker.Play();
         _speakers[peerId] = speaker;
