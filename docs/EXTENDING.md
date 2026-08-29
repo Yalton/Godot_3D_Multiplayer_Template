@@ -15,6 +15,37 @@ The server is always multiplayer peer `1`. `GameWorld` tracks players by peer ID
 dictionary; node names are not an identity contract. `PeerId` identifies which client may
 submit input.
 
+## Replace the avatar
+
+Set the project setting `template/avatar/scene_path` to a `PackedScene` whose root derives
+from `AvatarRig` (`Scripts/Avatar/AvatarRig.cs`). Leave it empty to use the built-in
+code-built `BlockmanRig`. A configured path that is empty, does not resolve to a resource,
+does not load as a `PackedScene`, or has a root that does not derive from `AvatarRig` all log
+a warning and fall back to the built-in rig rather than failing to build a character.
+
+A replacement rig must implement:
+
+- `SetLocomotion(LocomotionResult state)` — cosmetic, called every physics frame on every peer.
+- `PlayAction(string clip)` / `StopAction()` / `ActionPlaying` — one-shot clips over locomotion.
+- `GetAttachment(AvatarSlot slot)` — returns the attach point for a prop or cosmetic.
+- `ApplyAppearance(AvatarAppearance appearance)` — applies the replicated cosmetic description.
+
+The built-in rig defines clips `idle`, `walk`, `run`, `jump`, `fall`, `land`, and attachment
+slots `Head`, `Back`, `Hips`, `HandLeft`, `HandRight`. A replacement is free to use different
+clip names and slot contents internally, but code that calls `PlayAction` or `GetAttachment`
+by name should target names your rig actually defines.
+
+Locomotion animation is cosmetic: `NetworkPlayer` derives it locally on every peer from
+movement data it already has (velocity, grounded state), so it never needs to be replicated.
+Discrete presence state such as AFK is different — it is decided once on the server and
+replicated to every peer over the roster RPC. Any new state you add that affects gameplay
+outcomes must follow the AFK pattern (server-authoritative, replicated), never the locomotion
+pattern (locally derived), or clients can disagree on what happened.
+
+A rig is never built on a headless server (`AvatarFactory.Build` returns `null` there).
+`BoneAttachment3D` and the animation nodes it drives never participate in physics, so
+simulation is identical with or without a rig.
+
 ## Load a match scene
 
 Put the gameplay root in its own `PackedScene`, with deterministic node paths on every peer:

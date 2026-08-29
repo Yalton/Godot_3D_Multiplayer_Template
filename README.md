@@ -13,8 +13,12 @@ It runs with no third-party addons and supports:
 - Build and network-protocol compatibility rejection before registration
 - Synchronized threaded match-scene loading with peer readiness and late-join support
 - Server-authoritative first-person simulation with prediction, reconciliation, and interpolation
+- Swappable code-built avatar rig with procedural locomotion animation
+- First/third-person camera toggle (C) with a head-anchored aim origin
 - Positional push-to-talk voice chat (V), with per-player mute integration
 - Server-relayed text chat (Enter) in lobby and matches
+- In-match player list (Tab) with ping, speaking, mute, block, per-player volume, and host kick
+- Server-authoritative AFK detection with an optional dedicated-server idle kick
 - Server-validated raycast interactions and grabbable objects (E)
 - Host-simulated rigid bodies with 20 Hz snapshot interpolation
 - Synchronized monotonic server clock, authoritative 60 Hz tick, deadlines, and named timers
@@ -88,7 +92,11 @@ The bundled binaries come from the pinned GodotSteam fork used by Sundering (God
 - `Main.cs` is the UI/state shell.
 - `GameWorld.cs` owns authoritative player spawn/despawn.
 - `NetworkPlayer.cs` is the replaceable example character.
+- `AvatarFactory.cs` builds the configured replacement rig, falling back to the built-in body.
+- `PlayerCamera.cs` owns the first/third-person toggle and the head-anchored aim origin.
+- `PlayerNameplate.cs` renders a remote player's floating name, speaking, and AFK indicators.
 - `TextChatManager.cs` and `PositionalVoiceChat.cs` own session communication.
+- `PlayerListPanel.cs` is the in-match roster with presence, mute/block, volume, and kick controls.
 - `InteractionManager.cs`, `NetworkInteractable.cs`, and `NetworkPhysicsObject.cs` are the
   reusable world-interaction and synchronized-physics seams.
 - `NetworkClock.cs` supplies synchronized time, ticks, deadlines, scheduled callbacks, and
