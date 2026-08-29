@@ -32,8 +32,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private float _airborneSeconds;
     private bool _wasGrounded = true;
     private bool _targetGrounded = true;
-    private Camera3D _camera = null!;
-    private Node3D _head = null!;
+    private PlayerCamera _view = null!;
     private Label3D _nameLabel = null!;
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
@@ -44,19 +43,18 @@ public partial class NetworkPlayer : CharacterBody3D
     private bool IsLocalPlayer =>
         Multiplayer.HasMultiplayerPeer() && Multiplayer.GetUniqueId() == PeerId;
 
-    public void Setup(long id, Node3D head, Camera3D camera, Label3D nameLabel)
+    public void Setup(long id, PlayerCamera view, Label3D nameLabel)
     {
         PeerId = id;
         Name = id.ToString();
-        _head = head;
-        _camera = camera;
+        _view = view;
         _nameLabel = nameLabel;
         // The server owns every player node. PeerId identifies who may submit input.
         SetMultiplayerAuthority(1);
     }
 
-    public Vector3 HoldPosition => _head.GlobalPosition - _head.GlobalBasis.Z * 2.2f;
-    public Vector3 EyePosition => _camera.GlobalPosition;
+    public Vector3 HoldPosition => _view.GlobalPosition - _view.GlobalBasis.Z * 2.2f;
+    public Vector3 EyePosition => _view.EyePosition;
 
     public AvatarRig? Avatar => _avatar;
 
@@ -71,7 +69,7 @@ public partial class NetworkPlayer : CharacterBody3D
     {
         AddToGroup("network_players");
         _nameLabel.Text = Network.SessionManager.Instance.DisplayName(PeerId);
-        _camera.Current = IsLocalPlayer;
+        _view.Initialize(IsLocalPlayer, _avatar);
         if (IsLocalPlayer) LocalInputContext.Instance.RefreshMouseMode();
         _targetPosition = GlobalPosition;
         if (IsLocalPlayer) BuildInteractionHud();
@@ -86,13 +84,20 @@ public partial class NetworkPlayer : CharacterBody3D
             GetViewport().SetInputAsHandled();
             return;
         }
+        if (IsLocalPlayer && @event.IsActionPressed("toggle_camera") &&
+            !LocalInputContext.Instance.GameplaySuppressed)
+        {
+            _view.ToggleMode();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
         if (!IsLocalPlayer || LocalInputContext.Instance.GameplaySuppressed ||
             Input.MouseMode != Input.MouseModeEnum.Captured) return;
         if (@event is not InputEventMouseMotion motion) return;
         var sensitivity = SettingsManager.Instance.GetMouseSensitivity() / 15000f;
         _yaw -= motion.Relative.X * sensitivity;
         _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * sensitivity, -1.45f, 1.45f);
-        _head.Rotation = new Vector3(_pitch, 0, 0);
+        _view.ApplyPitch(_pitch);
     }
 
     public override void _PhysicsProcess(double delta)
@@ -142,8 +147,9 @@ public partial class NetworkPlayer : CharacterBody3D
 
     private NodePath InteractionTarget()
     {
-        var from = _camera.GlobalPosition;
-        var query = PhysicsRayQueryParameters3D.Create(from, from - _camera.GlobalBasis.Z * InteractionManager.Reach);
+        var from = _view.AimOrigin;
+        var query = PhysicsRayQueryParameters3D.Create(
+            from, from + _view.AimForward * InteractionManager.Reach);
         query.Exclude = [GetRid()];
         var hit = GetWorld3D().DirectSpaceState.IntersectRay(query);
         if (hit.TryGetValue("collider", out var collider) && collider.AsGodotObject() is Node3D node &&

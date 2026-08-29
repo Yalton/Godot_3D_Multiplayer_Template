@@ -94,10 +94,8 @@ public partial class GameWorld : Node3D
         };
         player.AddChild(collision);
         player.AttachAvatar(AvatarFactory.Build(peerId));
-        var head = new Node3D { Name = "Head", Position = new Vector3(0, 1.55f, 0) };
-        player.AddChild(head);
-        var camera = new Camera3D { Fov = SettingsManager.Instance.GetFov() };
-        head.AddChild(camera);
+        var view = new PlayerCamera { Position = new Vector3(0, 1.55f, 0) };
+        player.AddChild(view);
         var nameLabel = new Label3D
         {
             Position = new Vector3(0, 2.25f, 0),
@@ -106,7 +104,7 @@ public partial class GameWorld : Node3D
             FontSize = 32
         };
         player.AddChild(nameLabel);
-        player.Setup(peerId, head, camera, nameLabel);
+        player.Setup(peerId, view, nameLabel);
         return player;
     }
 }
