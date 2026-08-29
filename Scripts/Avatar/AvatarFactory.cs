@@ -46,7 +46,9 @@ public static class AvatarFactory
                 LogModule, $"{ScenePathSetting}='{configured}' is not a PackedScene; using the built-in rig");
             return null;
         }
-        if (scene.Instantiate() is AvatarRig rig) return rig;
+        var instance = scene.Instantiate();
+        if (instance is AvatarRig rig) return rig;
+        instance.QueueFree();
         DebugLogger.Instance.Warning(
             LogModule, $"{ScenePathSetting}='{configured}' root does not derive from AvatarRig; using the built-in rig");
         return null;
