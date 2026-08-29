@@ -117,9 +117,25 @@ and Steam relay/invite automation remain environment-specific follow-up work.
 
 These may be useful in many projects but are too large or genre-dependent to make mandatory:
 
-- Positional voice chat
 - Host migration
 - Mod and Workshop integration
 - Cloud save
 - Achievements and platform statistics
 - Replay and spectator recording
+
+## Friendslop phases
+
+A five-phase expansion adding social-expression features on top of the core template: visible
+characters, emotes, cosmetic identity, a richer voice layer, and in-match social controls.
+Each phase ships standalone and gets its own spec, plan, and implementation cycle under
+`docs/superpowers/specs/`.
+
+- P1 (implemented): avatar and presence. Rigged character, networked animation state,
+  third-person camera, Tab player list, speaking indicator, AFK detection, host kick.
+- P2 (planned): expression and identity. Emote wheel, character customization, profile
+  persistence, quick-chat wheel.
+- P3 (planned): voice overhaul. Opus codec, voice activity detection, per-player volume mixer,
+  proximity/global channels, microphone settings UI.
+- P4 (planned): social physics. Player push and ragdoll, carrying players, prop spawner.
+- P5 (planned): world toys and polish. Ping markers, spray tags, boombox, photo mode, Steam
+  rich presence and party.

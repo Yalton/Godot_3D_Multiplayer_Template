@@ -29,6 +29,7 @@ public partial class SessionManager : Node
     public string PlayerName { get; set; } = "Player";
     public string ServerName { get; set; } = "LAN Game";
     public int MaxPlayers { get; set; } = 8;
+    public double AfkKickSeconds { get; private set; }
     public bool MatchActive { get; private set; }
     public bool IsDedicatedServer { get; private set; }
     public SessionState State { get; private set; } = SessionState.Offline;
@@ -166,7 +167,7 @@ public partial class SessionManager : Node
     {
         var steamId = Transport == TransportKind.Steam ? Steam.SteamId : 0;
         var platform = steamId != 0 ? "Steam" : "LAN";
-        Players[1] = new PlayerIdentity(1, PlayerName, platform, steamId, true, true).ToDictionary();
+        Players[1] = new PlayerIdentity(1, PlayerName, platform, steamId, true, true, false).ToDictionary();
         RosterChanged?.Invoke(Players);
     }
 
@@ -245,7 +246,7 @@ public partial class SessionManager : Node
         if (safeName.Length > 24) safeName = safeName[..24];
         if (safeName.Length == 0) safeName = $"Player {sender}";
         Players[sender] = new PlayerIdentity(
-            sender, safeName, identityPlatform, steamId, false, false).ToDictionary();
+            sender, safeName, identityPlatform, steamId, false, false, false).ToDictionary();
         Rpc(nameof(SyncRoster), Players);
         RpcId(sender, nameof(ConnectionAccepted), (int)State, Players);
         RosterChanged?.Invoke(Players);
@@ -299,6 +300,57 @@ public partial class SessionManager : Node
         data["ready"] = ready;
         Rpc(nameof(SyncRoster), Players);
         RosterChanged?.Invoke(Players);
+    }
+
+    public void SetAfkServer(long peerId, bool afk)
+    {
+        if (!Multiplayer.IsServer()) return;
+        if (!Players.TryGetValue(peerId, out var data)) return;
+        if (data.GetValueOrDefault("afk", false).AsBool() == afk) return;
+        data["afk"] = afk;
+        Rpc(nameof(SyncRoster), Players);
+        RosterChanged?.Invoke(Players);
+    }
+
+    public void RequestKick(long targetPeerId, string reason)
+    {
+        if (Multiplayer.IsServer()) KickServer(Multiplayer.GetUniqueId(), targetPeerId, reason);
+        else RpcId(1, nameof(RequestKickRpc), targetPeerId, reason);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void RequestKickRpc(long targetPeerId, string reason)
+    {
+        if (!RpcSecurity.RequireServer(this, nameof(RequestKickRpc)) ||
+            !RpcSecurity.RequireKnownSender(this, nameof(RequestKickRpc), out var sender) ||
+            !RpcSecurity.RequireState(State, nameof(RequestKickRpc),
+                SessionState.Lobby, SessionState.Playing)) return;
+        if (!_requestLimiter.Allow(sender, nameof(RequestKickRpc), 4, 5000))
+        {
+            RpcSecurity.Reject(nameof(RequestKickRpc), sender, "rate limit exceeded");
+            return;
+        }
+        KickServer(sender, targetPeerId, reason);
+    }
+
+    private void KickServer(long senderPeerId, long targetPeerId, string reason)
+    {
+        var senderIsHost = Players.TryGetValue(senderPeerId, out var senderData) &&
+                           senderData.GetValueOrDefault("is_host", senderPeerId == 1).AsBool();
+        if (!KickPolicy.CanKick(senderPeerId, targetPeerId, senderIsHost, Players.ContainsKey(targetPeerId)))
+        {
+            RpcSecurity.Reject(nameof(RequestKickRpc), senderPeerId, $"may not kick {targetPeerId}");
+            return;
+        }
+        var safeReason = reason.Trim();
+        if (safeReason.Length > 96) safeReason = safeReason[..96];
+        if (safeReason.Length == 0) safeReason = "Removed by the host.";
+        DebugLogger.Instance.Info(LogModule, $"Kicking peer {targetPeerId}: {safeReason}");
+        RpcId(targetPeerId, nameof(ConnectionRejected), safeReason);
+        Players.Remove(targetPeerId);
+        Rpc(nameof(SyncRoster), Players);
+        RosterChanged?.Invoke(Players);
+        _ = DisconnectRejectedPeer(targetPeerId);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
@@ -369,6 +421,7 @@ public partial class SessionManager : Node
         {
             ServerName = config.GetValue("server", "name", ServerName).AsString();
             MaxPlayers = Math.Clamp(config.GetValue("server", "max_players", MaxPlayers).AsInt32(), 1, 64);
+            AfkKickSeconds = Math.Max(0, config.GetValue("server", "afk_kick_seconds", 0).AsDouble());
         }
         foreach (var arg in args)
         {
@@ -379,7 +432,8 @@ public partial class SessionManager : Node
         }
         if (IsDedicatedServer)
             DebugLogger.Instance.Info(LogModule,
-                $"Dedicated server configuration: name='{ServerName}', max={MaxPlayers}");
+                $"Dedicated server configuration: name='{ServerName}', max={MaxPlayers}, " +
+                $"afk_kick_seconds={AfkKickSeconds}");
     }
 
     public override void _Notification(int what)

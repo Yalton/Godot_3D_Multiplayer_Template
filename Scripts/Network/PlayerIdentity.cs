@@ -9,7 +9,8 @@ public readonly record struct PlayerIdentity(
     string Platform,
     long SteamId,
     bool IsHost,
-    bool Ready)
+    bool Ready,
+    bool Afk = false)
 {
     public bool HasSteamIdentity => Platform == "Steam" && SteamId != 0;
     public string StableSocialKey => HasSteamIdentity
@@ -22,7 +23,8 @@ public readonly record struct PlayerIdentity(
         data.GetValueOrDefault("platform", "LAN").AsString(),
         data.GetValueOrDefault("steam_id", 0L).AsInt64(),
         data.GetValueOrDefault("is_host", peerId == 1).AsBool(),
-        data.GetValueOrDefault("ready", false).AsBool());
+        data.GetValueOrDefault("ready", false).AsBool(),
+        data.GetValueOrDefault("afk", false).AsBool());
 
     public Dictionary ToDictionary() => new()
     {
@@ -30,6 +32,7 @@ public readonly record struct PlayerIdentity(
         ["platform"] = Platform,
         ["steam_id"] = SteamId,
         ["is_host"] = IsHost,
-        ["ready"] = Ready
+        ["ready"] = Ready,
+        ["afk"] = Afk
     };
 }

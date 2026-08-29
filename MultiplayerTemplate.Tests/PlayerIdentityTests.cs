@@ -28,4 +28,16 @@ public sealed class PlayerIdentityTests
         var identity = new PlayerIdentity(2, "Name", platform, steamId, false, false);
         Assert.False(identity.HasSteamIdentity);
     }
+
+    [Fact]
+    public void AfkDefaultsToPresent()
+    {
+        Assert.False(new PlayerIdentity(7, "Ann", "LAN", 0, false, true).Afk);
+    }
+
+    [Fact]
+    public void AfkIsCarriedOnTheRecord()
+    {
+        Assert.True(new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true).Afk);
+    }
 }

@@ -11,6 +11,9 @@ public partial class EnetTransport : Node
 
     public const int DefaultPort = 8910;
     public const int DiscoveryPort = 8911;
+    /// <summary>ENet channels reserved for RPC transfer channels 0..3: session (0),
+    /// player snapshots (1), voice (2), and clock probes (3).</summary>
+    public const int TransferChannels = 4;
     private const string Magic = "GODOT_3D_MP_TEMPLATE_V1";
 
     private readonly PacketPeerUdp _listener = new();
@@ -26,7 +29,7 @@ public partial class EnetTransport : Node
         DebugLogger.Instance.RegisterModule(LogModule, true);
         _gamePort = port;
         var peer = new ENetMultiplayerPeer();
-        var error = peer.CreateServer(port, maxPlayers);
+        var error = peer.CreateServer(port, maxPlayers, TransferChannels);
         if (error == Error.Ok)
         {
             Multiplayer.MultiplayerPeer = peer;
@@ -41,7 +44,7 @@ public partial class EnetTransport : Node
         DebugLogger.Instance.RegisterModule(LogModule, true);
         StopDiscovery();
         var peer = new ENetMultiplayerPeer();
-        var error = peer.CreateClient(address.Trim(), port);
+        var error = peer.CreateClient(address.Trim(), port, TransferChannels);
         if (error == Error.Ok) Multiplayer.MultiplayerPeer = peer;
         return error;
     }

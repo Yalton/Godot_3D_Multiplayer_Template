@@ -1,5 +1,6 @@
 using Godot;
 using SettingsKit;
+using MultiplayerTemplate.Avatar;
 using MultiplayerTemplate.Communication;
 using MultiplayerTemplate.Interaction;
 using MultiplayerTemplate.UI;
@@ -14,6 +15,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private const float SnapshotRate = 20f;
     private const float ReconcileThreshold = 0.12f;
     private const float HardSnapThreshold = 2.5f;
+    private const float YawIdleEpsilon = 0.01f;
 
     public long PeerId { get; private set; } = 1;
     private float _yaw;
@@ -27,11 +29,17 @@ public partial class NetworkPlayer : CharacterBody3D
     private float _serverYaw;
     private uint _nextInputSequence;
     private uint _lastReceivedSequence;
-    private Camera3D _camera = null!;
-    private Node3D _head = null!;
-    private Label3D _nameLabel = null!;
+    private AvatarRig? _avatar;
+    private float _airborneSeconds;
+    private bool _wasGrounded = true;
+    private bool _targetGrounded = true;
+    private PlayerCamera _view = null!;
+    private PlayerNameplate _nameLabel = null!;
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
+    private double _lastInputSeconds;
+    private bool _afk;
+    private bool _afkKickRequested;
 
     private readonly record struct PredictedInput(
         uint Sequence, Vector2 Move, bool Jump, float Yaw, float Delta);
@@ -39,25 +47,35 @@ public partial class NetworkPlayer : CharacterBody3D
     private bool IsLocalPlayer =>
         Multiplayer.HasMultiplayerPeer() && Multiplayer.GetUniqueId() == PeerId;
 
-    public void Setup(long id, Node3D head, Camera3D camera, Label3D nameLabel)
+    public void Setup(long id, PlayerCamera view, PlayerNameplate nameLabel)
     {
         PeerId = id;
         Name = id.ToString();
-        _head = head;
-        _camera = camera;
+        _view = view;
         _nameLabel = nameLabel;
         // The server owns every player node. PeerId identifies who may submit input.
         SetMultiplayerAuthority(1);
     }
 
-    public Vector3 HoldPosition => _head.GlobalPosition - _head.GlobalBasis.Z * 2.2f;
-    public Vector3 EyePosition => _camera.GlobalPosition;
+    public Vector3 HoldPosition => _view.GlobalPosition - _view.GlobalBasis.Z * 2.2f;
+    public Vector3 EyePosition => _view.EyePosition;
+
+    public AvatarRig? Avatar => _avatar;
+
+    public void AttachAvatar(AvatarRig? rig)
+    {
+        if (rig == null) return;
+        _avatar = rig;
+        AddChild(rig);
+    }
 
     public override void _Ready()
     {
+        _lastInputSeconds = Time.GetTicksMsec() / 1000.0;
         AddToGroup("network_players");
-        _nameLabel.Text = Network.SessionManager.Instance.DisplayName(PeerId);
-        _camera.Current = IsLocalPlayer;
+        if (Multiplayer.IsServer()) SessionManager.Instance.SetAfkServer(PeerId, false);
+        _nameLabel.Initialize(PeerId, IsLocalPlayer);
+        _view.Initialize(IsLocalPlayer, _avatar);
         if (IsLocalPlayer) LocalInputContext.Instance.RefreshMouseMode();
         _targetPosition = GlobalPosition;
         if (IsLocalPlayer) BuildInteractionHud();
@@ -72,13 +90,20 @@ public partial class NetworkPlayer : CharacterBody3D
             GetViewport().SetInputAsHandled();
             return;
         }
+        if (IsLocalPlayer && @event.IsActionPressed("toggle_camera") &&
+            !LocalInputContext.Instance.GameplaySuppressed)
+        {
+            _view.ToggleMode();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
         if (!IsLocalPlayer || LocalInputContext.Instance.GameplaySuppressed ||
             Input.MouseMode != Input.MouseModeEnum.Captured) return;
         if (@event is not InputEventMouseMotion motion) return;
         var sensitivity = SettingsManager.Instance.GetMouseSensitivity() / 15000f;
         _yaw -= motion.Relative.X * sensitivity;
         _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * sensitivity, -1.45f, 1.45f);
-        _head.Rotation = new Vector3(_pitch, 0, 0);
+        _view.ApplyPitch(_pitch);
     }
 
     public override void _PhysicsProcess(double delta)
@@ -90,6 +115,7 @@ public partial class NetworkPlayer : CharacterBody3D
             if (PeerId == Multiplayer.GetUniqueId())
             {
                 var local = ReadLocalInput();
+                NoteActivity(local.Move, local.Jump, _yaw);
                 _serverMoveInput = local.Move;
                 _serverJump = local.Jump;
                 _serverYaw = _yaw;
@@ -98,6 +124,7 @@ public partial class NetworkPlayer : CharacterBody3D
             ApplyMovement(_serverMoveInput, _serverJump, _serverYaw, step);
             _serverJump = false;
             SendSnapshots(delta);
+            UpdateAfk();
         }
         else if (IsLocalPlayer)
         {
@@ -117,6 +144,7 @@ public partial class NetworkPlayer : CharacterBody3D
                 Rotation.Z);
             Velocity = _targetVelocity;
         }
+        UpdateAvatarAnimation(step);
     }
 
     private (Vector2 Move, bool Jump) ReadLocalInput() =>
@@ -127,8 +155,9 @@ public partial class NetworkPlayer : CharacterBody3D
 
     private NodePath InteractionTarget()
     {
-        var from = _camera.GlobalPosition;
-        var query = PhysicsRayQueryParameters3D.Create(from, from - _camera.GlobalBasis.Z * InteractionManager.Reach);
+        var from = _view.AimOrigin;
+        var query = PhysicsRayQueryParameters3D.Create(
+            from, from + _view.AimForward * InteractionManager.Reach);
         query.Exclude = [GetRid()];
         var hit = GetWorld3D().DirectSpaceState.IntersectRay(query);
         if (hit.TryGetValue("collider", out var collider) && collider.AsGodotObject() is Node3D node &&
@@ -204,12 +233,51 @@ public partial class NetworkPlayer : CharacterBody3D
         MoveAndSlide();
     }
 
+    private void UpdateAvatarAnimation(float delta)
+    {
+        if (_avatar == null) return;
+        // Remote peers never run MoveAndSlide, so their IsOnFloor() is meaningless;
+        // the server tells them whether the character is grounded.
+        var grounded = Multiplayer.IsServer() || IsLocalPlayer ? IsOnFloor() : _targetGrounded;
+        var airborne = grounded ? _airborneSeconds : _airborneSeconds + delta;
+        var planarSpeed = new Vector2(Velocity.X, Velocity.Z).Length();
+        _avatar.SetLocomotion(
+            LocomotionSolver.Solve(planarSpeed, grounded, Velocity.Y, airborne, _wasGrounded));
+        _airborneSeconds = grounded ? 0f : airborne;
+        _wasGrounded = grounded;
+    }
+
+    private void NoteActivity(Vector2 move, bool jump, float yaw)
+    {
+        if (move.LengthSquared() <= 0f && !jump && Mathf.Abs(Mathf.AngleDifference(yaw, _serverYaw)) < YawIdleEpsilon)
+            return;
+        _lastInputSeconds = Time.GetTicksMsec() / 1000.0;
+    }
+
+    private void UpdateAfk()
+    {
+        if (!Multiplayer.IsServer()) return;
+        var idleSeconds = Time.GetTicksMsec() / 1000.0 - _lastInputSeconds;
+        var afk = AfkPolicy.Evaluate(idleSeconds, AfkPolicy.DefaultThresholdSeconds, _afk);
+        if (afk != _afk)
+        {
+            _afk = afk;
+            SessionManager.Instance.SetAfkServer(PeerId, afk);
+        }
+        if (!_afkKickRequested && PeerId != 1 &&
+            AfkPolicy.ShouldKick(idleSeconds, SessionManager.Instance.AfkKickSeconds))
+        {
+            _afkKickRequested = true;
+            SessionManager.Instance.RequestKick(PeerId, "Idle for too long.");
+        }
+    }
+
     private void SendSnapshots(double delta)
     {
         _snapshotAccumulator += delta;
         if (_snapshotAccumulator < 1.0 / SnapshotRate) return;
         _snapshotAccumulator = 0;
-        Rpc(nameof(ReceiveSnapshot), GlobalPosition, Velocity, Rotation.Y, _lastReceivedSequence);
+        Rpc(nameof(ReceiveSnapshot), GlobalPosition, Velocity, Rotation.Y, IsOnFloor(), _lastReceivedSequence);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
@@ -223,6 +291,7 @@ public partial class NetworkPlayer : CharacterBody3D
                 SessionManager.SessionState.Playing)) return;
         if (sequence <= _lastReceivedSequence) return;
         _lastReceivedSequence = sequence;
+        NoteActivity(move, jump, yaw);
         _serverMoveInput = move.LimitLength(1f);
         _serverJump |= jump;
         _serverYaw = Mathf.Wrap(yaw, -Mathf.Pi, Mathf.Pi);
@@ -230,7 +299,8 @@ public partial class NetworkPlayer : CharacterBody3D
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
         TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 1)]
-    private void ReceiveSnapshot(Vector3 position, Vector3 velocity, float yaw, uint acknowledgedInput)
+    private void ReceiveSnapshot(
+        Vector3 position, Vector3 velocity, float yaw, bool grounded, uint acknowledgedInput)
     {
         if (IsLocalPlayer)
         {
@@ -254,5 +324,6 @@ public partial class NetworkPlayer : CharacterBody3D
         _targetPosition = position;
         _targetVelocity = velocity;
         _targetYaw = yaw;
+        _targetGrounded = grounded;
     }
 }

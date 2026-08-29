@@ -32,6 +32,7 @@ public partial class SettingsManager : Node
 	private const float DEFAULT_AMBIENCE_VOLUME = 100.0f;
 	private const float DEFAULT_MOUSE_SENSITIVITY = 37.5f;
 	private const float DEFAULT_FOV = 80.0f;
+	private const int DEFAULT_CAMERA_MODE = 0;
 
 	// Video defaults
 	private const bool DEFAULT_VSYNC = true;
@@ -353,6 +354,7 @@ public partial class SettingsManager : Node
 		_config.SetValue("localization", "language", DEFAULT_LANGUAGE);
 		_config.SetValue("input", "mouse_sensitivity", DEFAULT_MOUSE_SENSITIVITY);
 		_config.SetValue("video", "fov", DEFAULT_FOV);
+		_config.SetValue("video", "camera_mode", DEFAULT_CAMERA_MODE);
 		_config.SetValue("accessibility", "colorblind_mode", DEFAULT_COLORBLIND_MODE);
 		_config.SetValue("accessibility", "screen_shake_enabled", DEFAULT_SCREEN_SHAKE_ENABLED);
 		_config.SetValue("accessibility", "motion_blur_enabled", DEFAULT_MOTION_BLUR_ENABLED);
@@ -600,6 +602,16 @@ public partial class SettingsManager : Node
 		Log.Debug(MODULE_NAME, $"FOV set to: {fov}");
 	}
 
+	public int GetCameraMode()
+	{
+		return (int)_config.GetValue("video", "camera_mode", DEFAULT_CAMERA_MODE);
+	}
+
+	public void SetCameraMode(int mode)
+	{
+		SaveSetting("video", "camera_mode", Mathf.Clamp(mode, 0, 1));
+	}
+
 	// Generic method to save a single setting
 	private void SaveSetting(string section, string key, Variant value)
 	{
@@ -626,6 +638,7 @@ public partial class SettingsManager : Node
 		_config.SetValue("localization", "language", GetCurrentLanguage());
 		_config.SetValue("input", "mouse_sensitivity", GetMouseSensitivity());
 		_config.SetValue("video", "fov", GetFov());
+		_config.SetValue("video", "camera_mode", GetCameraMode());
 		_config.SetValue("accessibility", "colorblind_mode", GetColorblindMode());
 		_config.SetValue("accessibility", "screen_shake_enabled", GetScreenShakeEnabled());
 		_config.SetValue("accessibility", "motion_blur_enabled", GetMotionBlurEnabled());

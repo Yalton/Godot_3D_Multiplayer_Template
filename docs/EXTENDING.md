@@ -5,7 +5,7 @@
 Keep `Session` alive and replace `GameWorld.cs` / `NetworkPlayer.cs`. The stable session
 surface is:
 
-- `SessionManager.Instance.Players`: `{ peer_id: {name, ready} }`
+- `SessionManager.Instance.Players`: `{ peer_id: {name, ready, afk} }`
 - `HostEnet()`, `JoinEnet()`, `HostSteam()`, `JoinSteamLobby()`
 - `SetReady()`, `StartMatch()`, and `DisconnectSession()`
 - `RosterChanged`, `MatchStarted`, and `ConnectionStateChanged`
@@ -14,6 +14,70 @@ surface is:
 The server is always multiplayer peer `1`. `GameWorld` tracks players by peer ID in a typed
 dictionary; node names are not an identity contract. `PeerId` identifies which client may
 submit input.
+
+## Replace the avatar
+
+Set the project setting `template/avatar/scene_path` to a `PackedScene` whose root derives
+from `AvatarRig` (`Scripts/Avatar/AvatarRig.cs`). Leave it empty to use the built-in
+code-built `BlockmanRig`. A configured path that is empty, does not resolve to a resource,
+does not load as a `PackedScene`, or has a root that does not derive from `AvatarRig` all log
+a warning and fall back to the built-in rig rather than failing to build a character.
+
+A replacement rig must implement:
+
+- `SetLocomotion(LocomotionResult state)` — cosmetic, called every physics frame on every peer.
+- `PlayAction(string clip)` / `StopAction()` / `ActionPlaying` — one-shot clips over locomotion.
+- `GetAttachment(AvatarSlot slot)` — returns the attach point for a prop or cosmetic.
+- `ApplyAppearance(AvatarAppearance appearance)` — applies the replicated cosmetic description.
+
+The built-in rig defines clips `idle`, `walk`, `run`, `jump`, `fall`, `land`, and attachment
+slots `Head`, `Back`, `Hips`, `HandLeft`, `HandRight`. A replacement is free to use different
+clip names and slot contents internally, but code that calls `PlayAction` or `GetAttachment`
+by name should target names your rig actually defines.
+
+Locomotion animation is cosmetic: `NetworkPlayer` derives it locally on every peer from
+movement data it already has (velocity, grounded state), so it never needs to be replicated.
+Discrete presence state such as AFK is different — it is decided once on the server and
+replicated to every peer over the roster RPC. Any new state you add that affects gameplay
+outcomes must follow the AFK pattern (server-authoritative, replicated), never the locomotion
+pattern (locally derived), or clients can disagree on what happened.
+
+A rig is never built on a headless server (`AvatarFactory.Build` returns `null` there).
+`BoneAttachment3D` and the animation nodes it drives never participate in physics, so
+simulation is identical with or without a rig.
+
+A rig is added as a child of the player's `CharacterBody3D` at local origin
+(`Scripts/Game/GameWorld.cs`), so a replacement must be authored **feet at origin, roughly
+1.8 m tall**, to line up with the `CapsuleShape3D` of radius 0.45 and height 1.8 centred at
+y=0.9. A model with a centred origin sinks into the floor.
+
+A replacement rig must carry **no collision shape and no physics body**. The note above that
+simulation is identical with or without a rig is a fact about the built-in `BlockmanRig`; for
+a replacement it is a requirement, because added physics changes the simulation and desyncs
+client-side prediction.
+
+`template/avatar/scene_path` lives in Project Settings → Advanced, or directly in the
+`[template]` block of `project.godot`:
+
+```ini
+[template]
+
+avatar/scene_path="res://path/to/my_rig.tscn"
+```
+
+A minimal subclass looks like:
+
+```csharp
+public partial class MyRig : AvatarRig
+{
+    public override void SetLocomotion(LocomotionResult state) { }
+    public override void PlayAction(string clip) { }
+    public override void StopAction() { }
+    public override bool ActionPlaying => false;
+    public override Node3D GetAttachment(AvatarSlot slot) => this;
+    public override void ApplyAppearance(AvatarAppearance appearance) { }
+}
+```
 
 ## Load a match scene
 

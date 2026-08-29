@@ -18,7 +18,7 @@
 - Every file keeps its own existing indentation. `Scripts/UI/Main.cs` uses **tabs**; every other file under `Scripts/` uses **4 spaces**.
 - The server is always multiplayer peer `1`. Derive identity from `Multiplayer.GetRemoteSenderId()`, never from a client-supplied peer id.
 - Every client request RPC must pass through `RpcSecurity` (server check, sender check, session-state check) and be rate limited via `RpcRateLimiter`.
-- `NetworkBuildInfo.ProtocolVersion` is incremented exactly once for this whole phase, in Task 5. Do not bump it again in later tasks.
+- `NetworkBuildInfo.ProtocolVersion` is incremented exactly once for this whole phase, in Task 5 (from 5 to 6 — a pre-task fix on this branch already moved it from 4 to 5 for an unrelated ENet channel change). Do not bump it again in later tasks.
 - Client-only visual systems must no-op when `DisplayServer.GetName() == "headless"`, following the guard in `Scripts/Communication/PositionalVoiceChat.cs:29`.
 - Full suite entry point: `bash Tests/run_all_tests.sh`.
 
@@ -561,29 +561,25 @@ Append to `MultiplayerTemplate.Tests/PlayerIdentityTests.cs` inside the existing
 
 ```csharp
     [Fact]
-    public void AfkSurvivesADictionaryRoundTrip()
+    public void AfkDefaultsToPresent()
     {
-        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true);
-        var restored = PlayerIdentity.FromDictionary(7, identity.ToDictionary());
-        Assert.True(restored.Afk);
-        Assert.True(restored.Ready);
-        Assert.Equal("Ann", restored.DisplayName);
+        Assert.False(new PlayerIdentity(7, "Ann", "LAN", 0, false, true).Afk);
     }
 
     [Fact]
-    public void PayloadWithoutAnAfkKeyDefaultsToPresent()
+    public void AfkIsCarriedOnTheRecord()
     {
-        var legacy = new Godot.Collections.Dictionary
-        {
-            ["name"] = "Bo",
-            ["platform"] = "LAN",
-            ["steam_id"] = 0L,
-            ["is_host"] = false,
-            ["ready"] = false
-        };
-        Assert.False(PlayerIdentity.FromDictionary(9, legacy).Afk);
+        Assert.True(new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true).Afk);
     }
 ```
+
+**Do NOT write an xUnit test that calls `ToDictionary()` or constructs a
+`Godot.Collections.Dictionary`.** Those types require the CLR to be hosted inside the Godot
+engine; under `dotnet test` they crash the test host process with a segmentation fault, which
+aborts the entire run rather than failing one test. The existing tests in this file pass
+precisely because they only construct the record. Dictionary round-trip behaviour — including
+an older payload with no `"afk"` key defaulting to false — is covered against the real engine
+in `Tests/NetworkSmoke.cs` (Task 19), not here.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -648,10 +644,14 @@ In `Scripts/Network/PlayerIdentityService.cs:35`, extend the fallback:
 
 Bump the protocol in `Scripts/Network/NetworkBuildInfo.cs` — increase `ProtocolVersion` by exactly one. This single bump covers the roster's new `afk` key (this task), the snapshot's new `grounded` field (Task 12), and the new kick RPC (Task 7).
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `dotnet test MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj --verbosity minimal`
 Expected: PASS — the whole xUnit suite, including the pre-existing identity tests.
+
+Run: `bash Tests/run_multiplayer_smoke.sh`
+Expected: `MULTIPLAYER HARNESS PASS`. This task changes a replicated payload and the protocol
+version, so the integration harness is the gate that actually exercises them.
 
 - [ ] **Step 5: Commit**
 
@@ -1091,19 +1091,20 @@ public partial class BlockmanRig : AvatarRig
 {
     private const string LogModule = "Avatar";
     private const string LibraryName = "template";
-    private const string ActionNode = "parameters/action/animation";
     private const string ActionRequest = "parameters/action_shot/request";
     private const string ActionActive = "parameters/action_shot/active";
     private const string GroundBlend = "parameters/locomotion/ground/blend_position";
     private const string StatePlayback = "parameters/locomotion/playback";
 
     private Skeleton3D _skeleton = null!;
+    private AnimationNodeAnimation _actionClip = null!;
     private AnimationPlayer _player = null!;
     private AnimationTree _tree = null!;
     private AnimationLibrary _library = null!;
     private readonly System.Collections.Generic.Dictionary<AvatarSlot, Node3D> _attachments = new();
     private readonly System.Collections.Generic.List<StandardMaterial3D> _materials = new();
     private LocomotionState _currentState = LocomotionState.Idle;
+    private bool _travelled;
 
     public override bool ActionPlaying => (bool)_tree.Get(ActionActive);
 
@@ -1118,7 +1119,10 @@ public partial class BlockmanRig : AvatarRig
     public override void SetLocomotion(LocomotionResult state)
     {
         _tree.Set(GroundBlend, state.Blend);
-        if (state.State == _currentState && !state.LandTriggered) return;
+        // The first call must travel unconditionally: a freshly activated state machine
+        // sits at its internal Start node, so an idle character would never animate.
+        if (_travelled && state.State == _currentState && !state.LandTriggered) return;
+        _travelled = true;
         _currentState = state.State;
         if (_tree.Get(StatePlayback).As<AnimationNodeStateMachinePlayback>() is not { } playback) return;
         playback.Travel(StateNodeName(state.State));
@@ -1131,7 +1135,9 @@ public partial class BlockmanRig : AvatarRig
             DebugLogger.Instance.Warning(LogModule, $"Avatar has no action clip '{clip}'; ignoring");
             return;
         }
-        _tree.Set(ActionNode, $"{LibraryName}/{clip}");
+        // AnimationNodeAnimation exposes no runtime "animation" parameter, so this must be
+        // set on the node instance directly; going through _tree.Set is a silent no-op.
+        _actionClip.Animation = $"{LibraryName}/{clip}";
         _tree.Set(ActionRequest, (int)AnimationNodeOneShot.OneShotRequest.Fire);
     }
 
@@ -1157,9 +1163,11 @@ public partial class BlockmanRig : AvatarRig
     {
         _skeleton = new Skeleton3D { Name = ProceduralAnimationLibrary.SkeletonNodeName };
         AddChild(_skeleton);
-        var hips = AddBone("hips", -1, new Vector3(0, 0.95f, 0));
-        var spine = AddBone("spine", hips, new Vector3(0, 0.35f, 0));
-        AddBone("head", spine, new Vector3(0, 0.35f, 0));
+        // These three offsets are chosen so the assembled body spans exactly y 0.0 to 1.80,
+        // matching the CapsuleShape3D in GameWorld.MakePlayer. Do not adjust them casually.
+        var hips = AddBone("hips", -1, new Vector3(0, 0.955f, 0));
+        var spine = AddBone("spine", hips, new Vector3(0, 0.28f, 0));
+        AddBone("head", spine, new Vector3(0, 0.225f, 0));
         AddBone("upperarm.L", spine, new Vector3(0.3f, 0.22f, 0));
         AddBone("upperarm.R", spine, new Vector3(-0.3f, 0.22f, 0));
         var thighL = AddBone("thigh.L", hips, new Vector3(0.14f, -0.05f, 0));
@@ -1265,7 +1273,8 @@ public partial class BlockmanRig : AvatarRig
         var oneShot = new AnimationNodeOneShot { FadeInTime = 0.1f, FadeOutTime = 0.15f };
         var root = new AnimationNodeBlendTree();
         root.AddNode("locomotion", locomotion, new Vector2(0, 0));
-        root.AddNode("action", new AnimationNodeAnimation(), new Vector2(0, 140));
+        _actionClip = new AnimationNodeAnimation();
+        root.AddNode("action", _actionClip, new Vector2(0, 140));
         root.AddNode("action_shot", oneShot, new Vector2(260, 60));
         root.ConnectNode("action_shot", 0, "locomotion");
         root.ConnectNode("action_shot", 1, "action");
@@ -1342,6 +1351,9 @@ public static class AvatarFactory
 
     private static AvatarRig? BuildConfigured()
     {
+        // DebugLogger drops messages for unregistered modules, and a static class has no
+        // _Ready to register in, so the warnings below would otherwise go nowhere.
+        DebugLogger.Instance.RegisterModule(LogModule, true);
         var configured = ProjectSettings.GetSetting(ScenePathSetting, "").AsString();
         if (string.IsNullOrWhiteSpace(configured)) return null;
         if (!ResourceLoader.Exists(configured))
@@ -1356,7 +1368,10 @@ public static class AvatarFactory
                 LogModule, $"{ScenePathSetting}='{configured}' is not a PackedScene; using the built-in rig");
             return null;
         }
-        if (scene.Instantiate() is AvatarRig rig) return rig;
+        // Node is not RefCounted: a rejected instance must be freed or it leaks.
+        var instance = scene.Instantiate();
+        if (instance is AvatarRig rig) return rig;
+        instance.QueueFree();
         DebugLogger.Instance.Warning(
             LogModule, $"{ScenePathSetting}='{configured}' root does not derive from AvatarRig; using the built-in rig");
         return null;
@@ -2488,7 +2503,10 @@ Start it from `SubmitFeatureChecks`, beside the existing server-only interaction
 Observe it on the client, at the top of `OnRoster`:
 
 ```csharp
-        if (!Multiplayer.IsServer() && Multiplayer.HasMultiplayerPeer() &&
+        // HasMultiplayerPeer() must be tested FIRST. This block runs on every RosterChanged,
+        // including the empty-roster call DisconnectSession fires after nulling the peer, and
+        // IsServer() prints a native error when no peer is assigned.
+        if (Multiplayer.HasMultiplayerPeer() && !Multiplayer.IsServer() &&
             players.TryGetValue(Multiplayer.GetUniqueId(), out var mine))
         {
             var afk = mine.GetValueOrDefault("afk", false).AsBool();
@@ -2496,6 +2514,38 @@ Observe it on the client, at the top of `OnRoster`:
             _sawAfkCleared |= _sawAfkFlag && !afk;
         }
 ```
+
+Also add the `PlayerIdentity` dictionary round-trip here, since it cannot run under xUnit —
+`Godot.Collections.Dictionary` requires a hosted engine and crashes the `dotnet test` host.
+Add the field `private bool _identityRoundTripPassed;` and this check:
+
+```csharp
+    private static bool CheckIdentityRoundTrip()
+    {
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true);
+        var restored = PlayerIdentity.FromDictionary(7, identity.ToDictionary());
+        var legacy = new Godot.Collections.Dictionary
+        {
+            ["name"] = "Bo",
+            ["platform"] = "LAN",
+            ["steam_id"] = 0L,
+            ["is_host"] = false,
+            ["ready"] = false
+        };
+        return restored.Afk && restored.Ready && restored.DisplayName == "Ann" &&
+               !PlayerIdentity.FromDictionary(9, legacy).Afk;
+    }
+```
+
+Call it in `_Ready` beside the existing `_securityHelpersPassed = CheckSecurityHelpers();`
+line:
+
+```csharp
+        _identityRoundTripPassed = CheckIdentityRoundTrip();
+```
+
+Require it in both the `FinishServer` and `FinishClient` success expressions, and add
+`identityRoundTrip={_identityRoundTripPassed}` to both failure messages.
 
 - [ ] **Step 4: Scope the existing ready/start logic to the main roles**
 
@@ -2530,7 +2580,7 @@ Add the probe below `DriveAfkProbe`:
 Add the role triggers to `OnRoster`, before the Step 4 early return:
 
 ```csharp
-        if (_role == "kick-server" && Multiplayer.IsServer() && !_startedKickProbe && players.Count == 3)
+        if (_role == "kick-server" && players.Count == 3 && !_startedKickProbe && Multiplayer.IsServer())
         {
             _startedKickProbe = true;
             _ = DriveKickProbe();
@@ -2554,19 +2604,19 @@ Add the roles in `_Ready`, beside the existing `host-loss-*` branches:
         {
             SessionManager.Instance.PlayerName = "KickHost";
             SessionManager.Instance.HostEnet(Port + 2);
-            FinishAfter(4, FinishKickServer);
+            FinishAfter(3, FinishKickServer);
         }
         else if (_role == "kick-target")
         {
             SessionManager.Instance.PlayerName = "KickTarget";
             SessionManager.Instance.JoinEnet("127.0.0.1", Port + 2);
-            FinishAfter(3.5, FinishKickTarget);
+            FinishAfter(3.8, FinishKickTarget);
         }
         else if (_role == "kick-rogue")
         {
             SessionManager.Instance.PlayerName = "KickRogue";
             SessionManager.Instance.JoinEnet("127.0.0.1", Port + 2);
-            FinishAfter(3.5, FinishKickRogue);
+            FinishAfter(4, FinishKickRogue);
         }
 ```
 

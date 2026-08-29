@@ -120,7 +120,7 @@ public partial class NetworkClock : Node
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
-        TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered)]
+        TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 3)]
     private void RequestClockSample(int sequence, long clientSendUsec)
     {
         if (!Multiplayer.IsServer()) return;
@@ -129,7 +129,7 @@ public partial class NetworkClock : Node
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
-        TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered)]
+        TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 3)]
     private void ReceiveClockSample(int sequence, long clientSendUsec, long serverReceiveUsec, ulong serverTick)
     {
         if (!_pending.Remove(sequence)) return;

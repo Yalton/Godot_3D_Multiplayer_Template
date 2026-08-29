@@ -25,7 +25,7 @@ public partial class Main : Node
 	private readonly System.Collections.Generic.List<Button> _steamButtons = new();
 	private readonly System.Collections.Generic.Dictionary<string, Button> _bindingButtons = new();
 	private readonly System.Collections.Generic.Dictionary<long, List<TextureRect>> _avatarViews = new();
-	private readonly System.Collections.Generic.Dictionary<long, Label> _qualityLabels = new();
+	private readonly System.Collections.Generic.Dictionary<long, PlayerRow> _rows = new();
 	private string? _rebindingAction;
 
 	public override void _Ready()
@@ -344,52 +344,28 @@ public partial class Main : Node
 	{
 		foreach (var child in _roster.GetChildren()) child.QueueFree();
 		_avatarViews.Clear();
-		_qualityLabels.Clear();
+		_rows.Clear();
 		var ownId = Multiplayer.HasMultiplayerPeer() ? Multiplayer.GetUniqueId() : 0;
+		var isHost = Multiplayer.HasMultiplayerPeer() && Multiplayer.IsServer();
 		foreach (var (peerId, data) in players)
 		{
 			var identity = PlayerIdentity.FromDictionary(peerId, data);
-			var row = new HBoxContainer();
-			var avatar = new TextureRect
-			{
-				CustomMinimumSize = new Vector2(36, 36),
-				ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-				StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered
-			};
-			row.AddChild(avatar);
-			var host = identity.IsHost ? " ★ HOST" : "";
-			var ready = identity.Ready ? "READY" : "NOT READY";
-			row.AddChild(new Label
-			{
-				Text = $"{identity.DisplayName}{host}    {ready}    [{identity.Platform}]",
-				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
-			});
-			var quality = new Label
-			{
-				Text = QualityText(peerId),
-				TooltipText = "Round-trip latency and rolling packet-loss estimate",
-				CustomMinimumSize = new Vector2(110, 0),
-				HorizontalAlignment = HorizontalAlignment.Right
-			};
-			_qualityLabels[peerId] = quality;
-			row.AddChild(quality);
-			if (peerId != ownId)
-			{
-				var muted = PlayerIdentityService.Instance.IsMuted(identity);
-				row.AddChild(Button(muted ? "Unmute" : "Mute", () =>
-				{
-					PlayerIdentityService.Instance.SetMuted(
-						identity, !PlayerIdentityService.Instance.IsMuted(identity));
-					RenderRoster(SessionManager.Instance.Players);
-				}));
-			}
+			var row = new PlayerRow();
 			_roster.AddChild(row);
+			row.Configure(identity, new PlayerRowOptions(
+				ShowReady: true,
+				ShowQuality: true,
+				ShowVoiceControls: false,
+				ShowKick: isHost,
+				LocalPeerId: ownId));
+			row.Changed += () => RenderRoster(SessionManager.Instance.Players);
+			_rows[peerId] = row;
 			if (!identity.HasSteamIdentity) continue;
 			if (!_avatarViews.TryGetValue(identity.SteamId, out var views))
 				_avatarViews[identity.SteamId] = views = new List<TextureRect>();
-			views.Add(avatar);
+			views.Add(row.Avatar);
 			if (PlayerIdentityService.Instance.TryGetAvatar(identity.SteamId, out var cached))
-				avatar.Texture = cached;
+				row.Avatar.Texture = cached;
 			else
 				PlayerIdentityService.Instance.RequestAvatar(identity.SteamId);
 		}
@@ -402,21 +378,8 @@ public partial class Main : Node
 
 	private void OnQualityChanged(long peerId, ConnectionQuality quality)
 	{
-		if (_qualityLabels.TryGetValue(peerId, out var label) && GodotObject.IsInstanceValid(label))
-			label.Text = QualityText(peerId);
-	}
-
-	private static string QualityText(long peerId)
-	{
-		var quality = ConnectionQualityMonitor.Instance.ForPeer(peerId);
-		var icon = quality.Health switch
-		{
-			ConnectionHealth.Excellent => "●",
-			ConnectionHealth.Good => "●",
-			ConnectionHealth.Degraded => "▲",
-			_ => "×"
-		};
-		return $"{icon} {quality.ShortText}";
+		foreach (var (_, row) in _rows)
+			if (GodotObject.IsInstanceValid(row)) row.RefreshQuality();
 	}
 
 	private void OnAvatarLoaded(long steamId, ImageTexture texture)
