@@ -39,6 +39,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private readonly List<PredictedInput> _pendingInputs = new();
     private double _lastInputSeconds;
     private bool _afk;
+    private bool _afkKickRequested;
 
     private readonly record struct PredictedInput(
         uint Sequence, Vector2 Move, bool Jump, float Yaw, float Delta);
@@ -72,6 +73,7 @@ public partial class NetworkPlayer : CharacterBody3D
     {
         _lastInputSeconds = Time.GetTicksMsec() / 1000.0;
         AddToGroup("network_players");
+        if (Multiplayer.IsServer()) SessionManager.Instance.SetAfkServer(PeerId, false);
         _nameLabel.Initialize(PeerId, IsLocalPlayer);
         _view.Initialize(IsLocalPlayer, _avatar);
         if (IsLocalPlayer) LocalInputContext.Instance.RefreshMouseMode();
@@ -262,8 +264,12 @@ public partial class NetworkPlayer : CharacterBody3D
             _afk = afk;
             SessionManager.Instance.SetAfkServer(PeerId, afk);
         }
-        if (PeerId != 1 && AfkPolicy.ShouldKick(idleSeconds, SessionManager.Instance.AfkKickSeconds))
+        if (!_afkKickRequested && PeerId != 1 &&
+            AfkPolicy.ShouldKick(idleSeconds, SessionManager.Instance.AfkKickSeconds))
+        {
+            _afkKickRequested = true;
             SessionManager.Instance.RequestKick(PeerId, "Idle for too long.");
+        }
     }
 
     private void SendSnapshots(double delta)

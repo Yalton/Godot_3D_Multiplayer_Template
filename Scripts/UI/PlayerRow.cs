@@ -126,14 +126,14 @@ public partial class PlayerRow : HBoxContainer
 
     private void WriteName(PlayerIdentity identity)
     {
-        var host = identity.IsHost ? "  * HOST" : "";
-        var ready = _options.ShowReady ? identity.Ready ? "  READY" : "  NOT READY" : "";
+        var host = identity.IsHost ? " ★ HOST" : "";
+        var ready = _options.ShowReady ? identity.Ready ? "    READY" : "    NOT READY" : "";
         var away = identity.Afk ? "  (away)" : "";
         var speaking = PositionalVoiceChat.Instance != null &&
                        PositionalVoiceChat.Instance.IsSpeaking(identity.PeerId)
             ? "  <))"
             : "";
-        _name.Text = $"{identity.DisplayName}{host}{ready}{away}{speaking}  [{identity.Platform}]";
+        _name.Text = $"{identity.DisplayName}{host}{ready}{away}{speaking}    [{identity.Platform}]";
     }
 
     private static Button TextButton(string text, Action pressed)

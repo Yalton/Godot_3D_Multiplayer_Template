@@ -119,3 +119,12 @@ The generic multiplayer foundation is feature-complete. Reconnect/slot reclamati
 migration, generalized game-mode settings, progression profiles, Workshop integration,
 achievements, cloud saves, and replay systems are deliberately extension points because their
 correct behavior depends on the game and deployment model.
+
+## Known issues
+
+Pre-existing, not caused by this phase's work, not yet fixed:
+
+- A windowed client can abort with a segmentation fault during engine teardown, after gameplay
+  and tests have completed.
+- `NetworkPhysicsObject` snapshot RPCs can reach a peer before its match scene has finished
+  mounting, logging "Node not found" on a slower-loading client.

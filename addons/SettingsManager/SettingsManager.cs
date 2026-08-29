@@ -638,6 +638,7 @@ public partial class SettingsManager : Node
 		_config.SetValue("localization", "language", GetCurrentLanguage());
 		_config.SetValue("input", "mouse_sensitivity", GetMouseSensitivity());
 		_config.SetValue("video", "fov", GetFov());
+		_config.SetValue("video", "camera_mode", GetCameraMode());
 		_config.SetValue("accessibility", "colorblind_mode", GetColorblindMode());
 		_config.SetValue("accessibility", "screen_shake_enabled", GetScreenShakeEnabled());
 		_config.SetValue("accessibility", "motion_blur_enabled", GetMotionBlurEnabled());

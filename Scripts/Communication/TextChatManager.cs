@@ -156,9 +156,13 @@ public partial class TextChatManager : CanvasLayer
     private void Append(long peerId, string name, string text)
     {
         if (peerId != Multiplayer.GetUniqueId() &&
-            SessionManager.Instance.Players.TryGetValue(peerId, out var data) &&
-            PlayerIdentityService.Instance.IsMuted(PlayerIdentity.FromDictionary(peerId, data)))
-            return;
+            SessionManager.Instance.Players.TryGetValue(peerId, out var data))
+        {
+            var identity = PlayerIdentity.FromDictionary(peerId, data);
+            if (PlayerIdentityService.Instance.IsMuted(identity) ||
+                PlayerIdentityService.Instance.IsBlocked(identity))
+                return;
+        }
         MessageReceived?.Invoke(peerId, name, text);
         if (!ClientUiEnabled) return;
         _log.AppendText($"[color=#8fd3ff]{ChatPolicy.EscapeBbCode(name)}[/color]: " +

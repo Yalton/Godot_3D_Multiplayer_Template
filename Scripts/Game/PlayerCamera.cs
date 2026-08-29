@@ -1,7 +1,6 @@
 using Godot;
 using SettingsKit;
 using MultiplayerTemplate.Avatar;
-using MultiplayerTemplate.UI;
 
 namespace MultiplayerTemplate.Game;
 

@@ -321,8 +321,10 @@ public partial class SessionManager : Node
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void RequestKickRpc(long targetPeerId, string reason)
     {
-        if (!RpcSecurity.RequireServer(this, nameof(RequestKickRpc))) return;
-        var sender = Multiplayer.GetRemoteSenderId();
+        if (!RpcSecurity.RequireServer(this, nameof(RequestKickRpc)) ||
+            !RpcSecurity.RequireKnownSender(this, nameof(RequestKickRpc), out var sender) ||
+            !RpcSecurity.RequireState(State, nameof(RequestKickRpc),
+                SessionState.Lobby, SessionState.Playing)) return;
         if (!_requestLimiter.Allow(sender, nameof(RequestKickRpc), 4, 5000))
         {
             RpcSecurity.Reject(nameof(RequestKickRpc), sender, "rate limit exceeded");

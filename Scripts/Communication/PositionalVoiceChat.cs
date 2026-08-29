@@ -40,6 +40,7 @@ public partial class PositionalVoiceChat : Node
     public override void _Ready()
     {
         Instance = this;
+        Multiplayer.PeerDisconnected += OnPeerDisconnected;
         if (DisplayServer.GetName() == "headless")
         {
             ProcessMode = ProcessModeEnum.Disabled;
@@ -61,6 +62,17 @@ public partial class PositionalVoiceChat : Node
         };
         AddChild(_micPump);
         _micPump.Play();
+    }
+
+    public override void _ExitTree()
+    {
+        Multiplayer.PeerDisconnected -= OnPeerDisconnected;
+    }
+
+    private void OnPeerDisconnected(long peerId)
+    {
+        if (_speakers.Remove(peerId, out var speaker)) speaker.QueueFree();
+        _speaking.Remove(peerId);
     }
 
     public override void _Process(double delta)
@@ -156,7 +168,11 @@ public partial class PositionalVoiceChat : Node
                 speaker.GlobalPosition = player.GlobalPosition + Vector3.Up * 1.5f;
     }
 
-    private static bool IsLocallyMuted(long peerId) =>
-        SessionManager.Instance.Players.TryGetValue(peerId, out var data) &&
-        PlayerIdentityService.Instance.IsMuted(PlayerIdentity.FromDictionary(peerId, data));
+    private static bool IsLocallyMuted(long peerId)
+    {
+        if (!SessionManager.Instance.Players.TryGetValue(peerId, out var data)) return false;
+        var identity = PlayerIdentity.FromDictionary(peerId, data);
+        return PlayerIdentityService.Instance.IsMuted(identity) ||
+            PlayerIdentityService.Instance.IsBlocked(identity);
+    }
 }
