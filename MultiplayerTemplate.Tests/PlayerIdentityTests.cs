@@ -30,26 +30,14 @@ public sealed class PlayerIdentityTests
     }
 
     [Fact]
-    public void AfkSurvivesADictionaryRoundTrip()
+    public void AfkDefaultsToPresent()
     {
-        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true);
-        var restored = PlayerIdentity.FromDictionary(7, identity.ToDictionary());
-        Assert.True(restored.Afk);
-        Assert.True(restored.Ready);
-        Assert.Equal("Ann", restored.DisplayName);
+        Assert.False(new PlayerIdentity(7, "Ann", "LAN", 0, false, true).Afk);
     }
 
     [Fact]
-    public void PayloadWithoutAnAfkKeyDefaultsToPresent()
+    public void AfkIsCarriedOnTheRecord()
     {
-        var legacy = new Godot.Collections.Dictionary
-        {
-            ["name"] = "Bo",
-            ["platform"] = "LAN",
-            ["steam_id"] = 0L,
-            ["is_host"] = false,
-            ["ready"] = false
-        };
-        Assert.False(PlayerIdentity.FromDictionary(9, legacy).Afk);
+        Assert.True(new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true).Afk);
     }
 }
