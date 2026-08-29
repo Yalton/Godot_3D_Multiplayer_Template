@@ -32,7 +32,7 @@ public partial class PlayerIdentityService : Node
     public PlayerIdentity Get(long peerId) =>
         SessionManager.Instance.Players.TryGetValue(peerId, out var data)
             ? PlayerIdentity.FromDictionary(peerId, data)
-            : new PlayerIdentity(peerId, $"Player {peerId}", "LAN", 0, peerId == 1, false);
+            : new PlayerIdentity(peerId, $"Player {peerId}", "LAN", 0, peerId == 1, false, false);
 
     public bool TryGetAvatar(long steamId, out ImageTexture? texture) =>
         _avatars.TryGetValue(steamId, out texture);

@@ -166,7 +166,7 @@ public partial class SessionManager : Node
     {
         var steamId = Transport == TransportKind.Steam ? Steam.SteamId : 0;
         var platform = steamId != 0 ? "Steam" : "LAN";
-        Players[1] = new PlayerIdentity(1, PlayerName, platform, steamId, true, true).ToDictionary();
+        Players[1] = new PlayerIdentity(1, PlayerName, platform, steamId, true, true, false).ToDictionary();
         RosterChanged?.Invoke(Players);
     }
 
@@ -245,7 +245,7 @@ public partial class SessionManager : Node
         if (safeName.Length > 24) safeName = safeName[..24];
         if (safeName.Length == 0) safeName = $"Player {sender}";
         Players[sender] = new PlayerIdentity(
-            sender, safeName, identityPlatform, steamId, false, false).ToDictionary();
+            sender, safeName, identityPlatform, steamId, false, false, false).ToDictionary();
         Rpc(nameof(SyncRoster), Players);
         RpcId(sender, nameof(ConnectionAccepted), (int)State, Players);
         RosterChanged?.Invoke(Players);

@@ -28,4 +28,28 @@ public sealed class PlayerIdentityTests
         var identity = new PlayerIdentity(2, "Name", platform, steamId, false, false);
         Assert.False(identity.HasSteamIdentity);
     }
+
+    [Fact]
+    public void AfkSurvivesADictionaryRoundTrip()
+    {
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true);
+        var restored = PlayerIdentity.FromDictionary(7, identity.ToDictionary());
+        Assert.True(restored.Afk);
+        Assert.True(restored.Ready);
+        Assert.Equal("Ann", restored.DisplayName);
+    }
+
+    [Fact]
+    public void PayloadWithoutAnAfkKeyDefaultsToPresent()
+    {
+        var legacy = new Godot.Collections.Dictionary
+        {
+            ["name"] = "Bo",
+            ["platform"] = "LAN",
+            ["steam_id"] = 0L,
+            ["is_host"] = false,
+            ["ready"] = false
+        };
+        Assert.False(PlayerIdentity.FromDictionary(9, legacy).Afk);
+    }
 }
