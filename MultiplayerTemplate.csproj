@@ -8,5 +8,11 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="MultiplayerTemplate.Tests/**/*.cs" />
+    <!-- Git worktrees and agent scratch live under .claude/. A worktree there holds a
+         second full copy of this project; without this exclusion the editor build sees
+         every class twice and stops compiling, and Godot then reports every script as
+         "class could not be found". -->
+    <Compile Remove=".claude/**/*.cs" />
+    <Compile Remove=".worktrees/**/*.cs" />
   </ItemGroup>
 </Project>
