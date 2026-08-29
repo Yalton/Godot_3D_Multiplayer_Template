@@ -2503,7 +2503,10 @@ Start it from `SubmitFeatureChecks`, beside the existing server-only interaction
 Observe it on the client, at the top of `OnRoster`:
 
 ```csharp
-        if (!Multiplayer.IsServer() && Multiplayer.HasMultiplayerPeer() &&
+        // HasMultiplayerPeer() must be tested FIRST. This block runs on every RosterChanged,
+        // including the empty-roster call DisconnectSession fires after nulling the peer, and
+        // IsServer() prints a native error when no peer is assigned.
+        if (Multiplayer.HasMultiplayerPeer() && !Multiplayer.IsServer() &&
             players.TryGetValue(Multiplayer.GetUniqueId(), out var mine))
         {
             var afk = mine.GetValueOrDefault("afk", false).AsBool();
@@ -2577,7 +2580,7 @@ Add the probe below `DriveAfkProbe`:
 Add the role triggers to `OnRoster`, before the Step 4 early return:
 
 ```csharp
-        if (_role == "kick-server" && Multiplayer.IsServer() && !_startedKickProbe && players.Count == 3)
+        if (_role == "kick-server" && players.Count == 3 && !_startedKickProbe && Multiplayer.IsServer())
         {
             _startedKickProbe = true;
             _ = DriveKickProbe();
@@ -2601,19 +2604,19 @@ Add the roles in `_Ready`, beside the existing `host-loss-*` branches:
         {
             SessionManager.Instance.PlayerName = "KickHost";
             SessionManager.Instance.HostEnet(Port + 2);
-            FinishAfter(4, FinishKickServer);
+            FinishAfter(3, FinishKickServer);
         }
         else if (_role == "kick-target")
         {
             SessionManager.Instance.PlayerName = "KickTarget";
             SessionManager.Instance.JoinEnet("127.0.0.1", Port + 2);
-            FinishAfter(3.5, FinishKickTarget);
+            FinishAfter(3.8, FinishKickTarget);
         }
         else if (_role == "kick-rogue")
         {
             SessionManager.Instance.PlayerName = "KickRogue";
             SessionManager.Instance.JoinEnet("127.0.0.1", Port + 2);
-            FinishAfter(3.5, FinishKickRogue);
+            FinishAfter(4, FinishKickRogue);
         }
 ```
 
