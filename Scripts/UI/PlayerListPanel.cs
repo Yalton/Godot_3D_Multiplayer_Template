@@ -46,14 +46,19 @@ public partial class PlayerListPanel : CanvasLayer
 
     public override void _ExitTree()
     {
+        if (_panel is { Visible: true }) LocalInputContext.Instance?.SetBlocked(BlockerId, false);
         if (SessionManager.Instance == null) return;
         SessionManager.Instance.RosterChanged -= Render;
         SessionManager.Instance.MatchEnded -= Close;
     }
 
-    public override void _UnhandledInput(InputEvent @event)
+    // _Input runs before Godot's GUI phase. _UnhandledInput would not: once one of this
+    // panel's own buttons or sliders holds focus, Tab is consumed as ui_focus_next and the
+    // panel could never be closed.
+    public override void _Input(InputEvent @event)
     {
         if (!@event.IsActionPressed("player_list") || !SessionManager.Instance.MatchActive) return;
+        if (GetViewport().GuiGetFocusOwner() is LineEdit or TextEdit or CodeEdit) return;
         Toggle();
         GetViewport().SetInputAsHandled();
     }
