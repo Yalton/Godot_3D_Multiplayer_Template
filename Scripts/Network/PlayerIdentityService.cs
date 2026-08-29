@@ -1,5 +1,6 @@
 using Godot;
 using DebugLoggerKit;
+using MultiplayerTemplate.Communication;
 
 namespace MultiplayerTemplate.Network;
 
@@ -57,6 +58,17 @@ public partial class PlayerIdentityService : Node
 
     public void SetBlocked(PlayerIdentity identity, bool blocked) =>
         SetSocialState("blocked", identity.StableSocialKey, blocked);
+
+    public float GetVoiceVolume(PlayerIdentity identity) => VoiceVolumePolicy.Clamp(
+        (float)_socialConfig.GetValue(
+            "voice_volume", identity.StableSocialKey, VoiceVolumePolicy.Default).AsDouble());
+
+    public void SetVoiceVolume(PlayerIdentity identity, float linear)
+    {
+        _socialConfig.SetValue("voice_volume", identity.StableSocialKey, VoiceVolumePolicy.Clamp(linear));
+        _socialConfig.Save(SocialConfigPath);
+        SocialStateChanged?.Invoke(identity.StableSocialKey);
+    }
 
     private void SetSocialState(string section, string key, bool enabled)
     {
