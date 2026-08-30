@@ -43,6 +43,8 @@ public partial class NetworkPlayer : CharacterBody3D
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
     private readonly RpcCooldowns _rejectLog = new();
+    private readonly RpcRateLimiter _emoteLimiter = new();
+    public int ActiveEmote { get; private set; } = EmoteCatalogue.None;
     private double _lastInputSeconds;
     private bool _afk;
     private bool _afkKickRequested;
@@ -122,6 +124,8 @@ public partial class NetworkPlayer : CharacterBody3D
             {
                 var local = ReadLocalInput();
                 NoteActivity(local.Move, local.Jump, _yaw);
+                if (ActiveEmote != EmoteCatalogue.None &&
+                    (local.Move.LengthSquared() > 0f || local.Jump)) SetEmoteServer(EmoteCatalogue.None);
                 _serverMoveInput = local.Move;
                 _serverJump = local.Jump;
                 _serverYaw = _yaw;
@@ -163,6 +167,8 @@ public partial class NetworkPlayer : CharacterBody3D
             _view.ApplyPitch(_pitch);
             Velocity = _targetVelocity;
         }
+        if (IsLocalPlayer && _avatar is { ActionPlaying: false } &&
+            ActiveEmote == EmoteCatalogue.None) _view.PopTemporary("emote");
         UpdateAvatarAnimation(step);
     }
 
@@ -329,6 +335,80 @@ public partial class NetworkPlayer : CharacterBody3D
         _serverJump |= jump;
         _serverYaw = Mathf.Wrap(yaw, -Mathf.Pi, Mathf.Pi);
         _serverPitch = Mathf.Clamp(pitch, -PitchLimit, PitchLimit);
+        // Movement ends a looping emote. NoteActivity already decides what counts as the
+        // player doing something; reuse that rather than inventing a second notion.
+        if (ActiveEmote != EmoteCatalogue.None &&
+            (move.LengthSquared() > 0f || jump)) SetEmoteServer(EmoteCatalogue.None);
+    }
+
+    public void RequestEmote(int id)
+    {
+        if (!IsLocalPlayer) return;
+        if (Multiplayer.IsServer()) SubmitEmoteServer(Multiplayer.GetUniqueId(), id);
+        else RpcId(1, nameof(SubmitEmote), id);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+        TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void SubmitEmote(int id)
+    {
+        if (!RpcSecurity.RequireServer(this, nameof(SubmitEmote))) return;
+        var sender = Multiplayer.GetRemoteSenderId();
+        if (!RpcSecurity.RequireSender(sender, PeerId, nameof(SubmitEmote)) ||
+            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(SubmitEmote),
+                SessionManager.SessionState.Playing)) return;
+        SubmitEmoteServer(sender, id);
+    }
+
+    private void SubmitEmoteServer(long sender, int id)
+    {
+        if (!_emoteLimiter.Allow(sender, nameof(SubmitEmote), 4, 2000))
+        {
+            // Throttled: a wheel is trivially spammable and warnings are no longer suppressed.
+            if (_rejectLog.TryConsume(sender, nameof(SubmitEmote), 1000))
+                RpcSecurity.Reject(nameof(SubmitEmote), sender, "rate limit exceeded");
+            return;
+        }
+        if (id != EmoteCatalogue.None && !EmoteCatalogue.TryGet(id, out _))
+        {
+            if (_rejectLog.TryConsume(sender, nameof(SubmitEmote), 1000))
+                RpcSecurity.Reject(nameof(SubmitEmote), sender, $"unknown emote {id}");
+            return;
+        }
+        SetEmoteServer(id);
+    }
+
+    private void SetEmoteServer(int id)
+    {
+        if (!Multiplayer.IsServer()) return;
+        // Only looping emotes are state. A one-shot is broadcast and forgotten, so a peer
+        // that joins later correctly sees nothing.
+        var looping = EmoteCatalogue.TryGet(id, out var definition) && definition.Looping;
+        ActiveEmote = looping ? id : EmoteCatalogue.None;
+        Rpc(nameof(ReceiveEmote), id);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true,
+        TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void ReceiveEmote(int id)
+    {
+        if (!Multiplayer.IsServer())
+            ActiveEmote = EmoteCatalogue.TryGet(id, out var d) && d.Looping ? id : EmoteCatalogue.None;
+        PlayEmoteLocally(id);
+    }
+
+    public void PlayEmoteLocally(int id)
+    {
+        if (_avatar == null) return;
+        if (id == EmoteCatalogue.None)
+        {
+            _avatar.StopAction();
+            if (IsLocalPlayer) _view.PopTemporary("emote");
+            return;
+        }
+        if (!EmoteCatalogue.TryGet(id, out var definition)) return;
+        _avatar.PlayAction(definition.Clip);
+        if (IsLocalPlayer) _view.PushTemporaryThirdPerson("emote");
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
