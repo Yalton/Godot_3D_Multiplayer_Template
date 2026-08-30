@@ -43,7 +43,7 @@ public partial class GameWorld : Node3D
         foreach (var peerId in SessionManager.Instance.Players.Keys)
         {
             if (SkipSpawn(peerId)) continue;
-            Rpc(nameof(SpawnPlayer), peerId, SpawnPosition(peerId));
+            Rpc(nameof(SpawnPlayer), peerId, SpawnPosition(peerId), Avatar.EmoteCatalogue.None);
         }
     }
 
@@ -71,20 +71,26 @@ public partial class GameWorld : Node3D
         foreach (var existingPeerId in SessionManager.Instance.Players.Keys)
         {
             if (existingPeerId != joiningPeerId && !SkipSpawn(existingPeerId))
-                RpcId(joiningPeerId, nameof(SpawnPlayer), existingPeerId, SpawnPosition(existingPeerId));
+            {
+                var existingEmote = _players.TryGetValue(existingPeerId, out var existingPlayer)
+                    ? existingPlayer.ActiveEmote
+                    : Avatar.EmoteCatalogue.None;
+                RpcId(joiningPeerId, nameof(SpawnPlayer), existingPeerId, SpawnPosition(existingPeerId), existingEmote);
+            }
         }
-        Rpc(nameof(SpawnPlayer), joiningPeerId, SpawnPosition(joiningPeerId));
+        Rpc(nameof(SpawnPlayer), joiningPeerId, SpawnPosition(joiningPeerId), Avatar.EmoteCatalogue.None);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true,
         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void SpawnPlayer(long peerId, Vector3 position)
+    private void SpawnPlayer(long peerId, Vector3 position, int activeEmote)
     {
         if (_players.ContainsKey(peerId)) return;
         var player = MakePlayer(peerId);
         _players[peerId] = player;
         AddChild(player);
         player.GlobalPosition = position;
+        if (activeEmote != Avatar.EmoteCatalogue.None) player.PlayEmoteLocally(activeEmote);
     }
 
     private Vector3 SpawnPosition(long peerId)
