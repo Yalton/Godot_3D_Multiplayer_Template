@@ -28,9 +28,13 @@ public partial class MatchSceneCoordinator : Node
     // would report every peer as "ready" there. Match-scene RPC senders use this to avoid
     // targeting a peer that has not yet mounted the scene and so has no such node.
     // A peer appears in Multiplayer.GetPeers() as soon as its transport connects, but its
-    // RegisterPlayer RPC (which adds it to SessionManager.Players and, in the same call,
-    // to _waitingFor via HandleLateJoin) may not have arrived yet. A peer absent from the
-    // roster is definitionally holding no scene, so it must not read as ready either.
+    // RegisterPlayer RPC (which adds it to SessionManager.Players and calls HandleLateJoin
+    // in the same call) may not have arrived yet. A peer absent from the roster is
+    // definitionally holding no scene, so it must not read as ready either.
+    // HandleLateJoin only adds the peer to _waitingFor during Loading/Playing; it is a
+    // no-op during Lobby, so a peer registered while the session is in Lobby reads as
+    // ready with no scene mounted. Harmless today only because no match-scene RPC sender
+    // runs during Lobby.
     public bool IsSceneReady(long peerId) =>
         SessionManager.Instance.Players.ContainsKey(peerId) && !_waitingFor.Contains(peerId);
 

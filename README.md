@@ -20,6 +20,8 @@ It runs with no third-party addons and supports:
 - In-match player list (Tab) with ping, speaking, mute, block, per-player volume, and host kick
 - Server-authoritative AFK detection with an optional dedicated-server idle kick
 - Server-validated raycast interactions and grabbable objects (E)
+- Held emote wheel (B) with one-shot and looping emotes, cancelled by movement
+- Held quick-chat wheel (Z) sending canned lines by id, never free text
 - Host-simulated rigid bodies with 20 Hz snapshot interpolation
 - Synchronized monotonic server clock, authoritative 60 Hz tick, deadlines, and named timers
 - Rolling ping, jitter, packet-loss, and degraded/timeout connection monitoring
@@ -100,6 +102,8 @@ The bundled binaries come from the pinned GodotSteam fork used by Sundering (God
 - `PlayerNameplate.cs` renders a remote player's floating name, speaking, and AFK indicators.
 - `TextChatManager.cs` and `PositionalVoiceChat.cs` own session communication.
 - `PlayerListPanel.cs` is the in-match roster with presence, mute/block, volume, and kick controls.
+- `EmoteCatalogue.cs` and `QuickChatLines.cs` are id-keyed tables whose lookup doubles as the
+  server's validation, rejecting any id absent from the table.
 - `InteractionManager.cs`, `NetworkInteractable.cs`, and `NetworkPhysicsObject.cs` are the
   reusable world-interaction and synchronized-physics seams.
 - `NetworkClock.cs` supplies synchronized time, ticks, deadlines, scheduled callbacks, and

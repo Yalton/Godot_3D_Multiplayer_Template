@@ -79,6 +79,36 @@ public partial class MyRig : AvatarRig
 }
 ```
 
+## Replace the emotes and quick-chat lines
+
+Emotes are looked up by id in `Scripts/Avatar/EmoteCatalogue.cs`; the lookup is also the
+server's validation, so a submitted id absent from the table is rejected rather than trusted.
+To add one, add a row there and a clip of the same name in `ProceduralAnimationLibrary`. To
+replace the set wholesale, replace the table — a rig that defines different clip names owns
+what those names mean.
+
+A replacement rig that does not define a catalogue clip gets a specific, deliberate
+degradation: `AvatarRig.PlayAction` (`BlockmanRig.PlayAction` in the built-in rig) ignores
+clip names the rig has no animation for and logs a warning, so a custom rig with no
+`emote_sit` plays nothing while `NetworkPlayer.ActiveEmote` still replicates normally — that
+player is genuinely sitting to the server while standing still visually on every peer.
+Consistent world state, missing cosmetic; state it plainly so nobody debugs it twice. The
+local camera's automatic third-person swing while an emote plays also does not stick in this
+case: it is bounded by a half-second timeout (`NetworkPlayer._emoteStartDeadline`) so a clip
+that never starts still returns the camera on its own.
+
+Quick-chat lines are ids, not free text; adding one is a row in
+`Scripts/Communication/QuickChatLines.cs`. Every line must survive `ChatPolicy.Sanitize`
+unchanged — `QuickChatLinesTests` asserts this for the whole table, so a line that would be
+altered by sanitizing (leading/trailing whitespace, embedded line breaks) fails the build
+rather than silently reaching chat trimmed.
+
+Only a looping emote is state: `NetworkPlayer.ActiveEmote` holds its id, or `EmoteCatalogue.None`
+if the active emote is one-shot or there isn't one — a one-shot is broadcast once and
+forgotten, not stored. This follows the state-lifetime rule below: `ActiveEmote` lives on
+`NetworkPlayer`, so it dies with the body, and `GameWorld.SpawnForLateJoin` is the single place
+that reads it from outside that node, to replay it for a peer who joins mid-emote.
+
 ## Replace the whole player
 
 To swap the entire player node without touching code, set `GameWorld.PlayerScene` (exported

@@ -132,8 +132,10 @@ Each phase ships standalone and gets its own spec, plan, and implementation cycl
 
 - P1 (implemented): avatar and presence. Rigged character, networked animation state,
   third-person camera, Tab player list, speaking indicator, AFK detection, host kick.
-- P2 (planned): expression and identity. Emote wheel, character customization, profile
-  persistence, quick-chat wheel.
+- P2a (implemented): expression. Held emote wheel (B) and held quick-chat wheel (Z), both
+  server-validated against an id-keyed catalogue.
+- P2b (next): identity. Appearance, a cosmetic catalogue, a customization screen, and profile
+  persistence. See `docs/superpowers/specs/` for the phase spec.
 - P3 (planned): voice overhaul. Opus codec, voice activity detection, per-player volume mixer,
   proximity/global channels, microphone settings UI.
 - P4 (planned): social physics. Player push and ragdoll, carrying players, prop spawner.
