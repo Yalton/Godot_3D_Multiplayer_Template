@@ -1,14 +1,21 @@
 using Godot;
 using MultiplayerTemplate.Avatar;
+using MultiplayerTemplate.Communication;
 using MultiplayerTemplate.Game;
 using MultiplayerTemplate.Network;
 
 namespace MultiplayerTemplate.UI;
 
 /// <summary>
-/// Autoload owning the held emote wheel. Held open by "emote_wheel" while a match is active;
-/// releasing commits the selection and asks the local player's <see cref="NetworkPlayer"/> to
-/// broadcast it. Client-only; a dedicated server never builds a wheel.
+/// Autoload owning the held expression wheel, shared by two actions: "emote_wheel" (emotes)
+/// and "quick_chat_wheel" (canned chat lines). Held open by whichever action pressed first
+/// while a match is active; releasing commits the selection and dispatches it to that
+/// action's handler. Client-only; a dedicated server never builds a wheel.
+///
+/// Only one wheel may be open at a time. The action that opened it is remembered, and a
+/// press of the other action while one is held is ignored — it neither swaps the entries
+/// under an open wheel nor commits to the wrong handler. Only a release of the action that
+/// opened it commits.
 ///
 /// Unlike <see cref="PlayerListPanel"/>, the mouse stays captured and gameplay input keeps
 /// flowing while this is open — no <see cref="LocalInputContext"/> blocker is ever set. The
@@ -19,6 +26,7 @@ public partial class ExpressionWheels : CanvasLayer
 {
     private RadialWheel _wheel = null!;
     private bool _disabled;
+    private string? _openAction;
 
     public override void _Ready()
     {
@@ -49,8 +57,19 @@ public partial class ExpressionWheels : CanvasLayer
 
         if (@event.IsActionPressed("emote_wheel"))
         {
+            // A wheel is already open for the other action: ignore rather than swap.
+            if (_wheel.IsOpen) return;
             if (!SessionManager.Instance.MatchActive) return;
-            Open();
+            OpenEmoteWheel();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+
+        if (@event.IsActionPressed("quick_chat_wheel"))
+        {
+            if (_wheel.IsOpen) return;
+            if (!SessionManager.Instance.MatchActive) return;
+            OpenQuickChatWheel();
             GetViewport().SetInputAsHandled();
             return;
         }
@@ -64,27 +83,54 @@ public partial class ExpressionWheels : CanvasLayer
             return;
         }
 
+        // A release of the action that did not open the wheel must not commit anything.
         if (@event.IsActionReleased("emote_wheel"))
         {
+            if (_openAction != "emote_wheel") return;
             var id = _wheel.Commit();
-            _wheel.Close();
+            Close();
             GetViewport().SetInputAsHandled();
             if (id != EmoteCatalogue.None) FindLocalPlayer()?.RequestEmote(id);
+            return;
+        }
+
+        if (@event.IsActionReleased("quick_chat_wheel"))
+        {
+            if (_openAction != "quick_chat_wheel") return;
+            var id = _wheel.Commit();
+            Close();
+            GetViewport().SetInputAsHandled();
+            if (id != 0) TextChatManager.Instance.SubmitQuickChat(id);
         }
     }
 
-    private void Open()
+    private void OpenEmoteWheel()
     {
         var entries = new List<(string Label, int Id)>(EmoteCatalogue.All.Count);
         foreach (var entry in EmoteCatalogue.All) entries.Add((entry.DisplayName, entry.Id));
+        _openAction = "emote_wheel";
         _wheel.Open(entries);
+    }
+
+    private void OpenQuickChatWheel()
+    {
+        var entries = new List<(string Label, int Id)>(QuickChatLines.All.Count);
+        foreach (var entry in QuickChatLines.All) entries.Add((entry.Text, entry.Id));
+        _openAction = "quick_chat_wheel";
+        _wheel.Open(entries);
+    }
+
+    private void Close()
+    {
+        _wheel.Close();
+        _openAction = null;
     }
 
     // A match ending mid-hold must not strand the wheel open with a captured mouse and a
     // dead selection.
     private void HandleMatchEnded()
     {
-        if (_wheel.IsOpen) _wheel.Close();
+        if (_wheel.IsOpen) Close();
     }
 
     private NetworkPlayer? FindLocalPlayer()

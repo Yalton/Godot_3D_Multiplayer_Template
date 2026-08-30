@@ -119,6 +119,39 @@ public partial class TextChatManager : CanvasLayer
         else RpcId(1, nameof(RequestMessage), text);
     }
 
+    public void SubmitQuickChat(int id)
+    {
+        if (!Multiplayer.HasMultiplayerPeer()) return;
+        if (Multiplayer.IsServer()) AcceptQuickChat(Multiplayer.GetUniqueId(), id);
+        else RpcId(1, nameof(RequestQuickChat), id);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+        TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void RequestQuickChat(int id)
+    {
+        if (!RpcSecurity.RequireServer(this, nameof(RequestQuickChat)) ||
+            !RpcSecurity.RequireKnownSender(this, nameof(RequestQuickChat), out var sender) ||
+            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(RequestQuickChat),
+                SessionManager.SessionState.Lobby, SessionManager.SessionState.Playing)) return;
+        AcceptQuickChat(sender, id);
+    }
+
+    private void AcceptQuickChat(long peerId, int id)
+    {
+        if (!_rateLimiter.Allow(peerId, nameof(RequestQuickChat), 5, 4000))
+        {
+            RpcSecurity.Reject(nameof(RequestQuickChat), peerId, "rate limit exceeded");
+            return;
+        }
+        if (!QuickChatLines.TryGet(id, out var line))
+        {
+            RpcSecurity.Reject(nameof(RequestQuickChat), peerId, $"unknown quick chat line {id}");
+            return;
+        }
+        AcceptMessage(peerId, line.Text);
+    }
+
     private void CloseInput()
     {
         if (_input == null) return;
