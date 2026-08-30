@@ -16,6 +16,12 @@ public static class ProceduralAnimationLibrary
     public const string Jump = "jump";
     public const string Fall = "fall";
     public const string Land = "land";
+    public const string EmoteWave = "emote_wave";
+    public const string EmotePoint = "emote_point";
+    public const string EmoteClap = "emote_clap";
+    public const string EmoteCheer = "emote_cheer";
+    public const string EmoteSit = "emote_sit";
+    public const string EmoteDance = "emote_dance";
 
     public static AnimationLibrary Build()
     {
@@ -26,6 +32,12 @@ public static class ProceduralAnimationLibrary
         library.AddAnimation(Jump, BuildJump());
         library.AddAnimation(Fall, BuildFall());
         library.AddAnimation(Land, BuildLand());
+        library.AddAnimation(EmoteWave, BuildEmoteWave());
+        library.AddAnimation(EmotePoint, BuildEmotePoint());
+        library.AddAnimation(EmoteClap, BuildEmoteClap());
+        library.AddAnimation(EmoteCheer, BuildEmoteCheer());
+        library.AddAnimation(EmoteSit, BuildEmoteSit());
+        library.AddAnimation(EmoteDance, BuildEmoteDance());
         return library;
     }
 
@@ -92,6 +104,93 @@ public static class ProceduralAnimationLibrary
         AddRotationTrack(animation, "thigh.R", (0f, Pitch(0.55f)), (0.35f, Pitch(0f)));
         AddRotationTrack(animation, "shin.L", (0f, Pitch(-0.9f)), (0.35f, Pitch(0f)));
         AddRotationTrack(animation, "shin.R", (0f, Pitch(-0.9f)), (0.35f, Pitch(0f)));
+        return animation;
+    }
+
+    private static Animation BuildEmoteWave()
+    {
+        // Not looping: a one-shot must finish so the AnimationNodeOneShot ends on its own.
+        var animation = NewAnimation(1.2f, loop: false);
+        AddRotationTrack(animation, "upperarm.R",
+            (0f, Roll(-0.14f)),
+            (0.15f, Roll(-2.2f)),
+            (0.4f, Roll(-2.2f) * Pitch(0.3f)),
+            (0.7f, Roll(-2.2f) * Pitch(-0.3f)),
+            (1.0f, Roll(-2.2f) * Pitch(0.3f)),
+            (1.2f, Roll(-0.14f)));
+        return animation;
+    }
+
+    private static Animation BuildEmotePoint()
+    {
+        var animation = NewAnimation(0.8f, loop: false);
+        AddRotationTrack(animation, "upperarm.R",
+            (0f, Roll(-0.14f)), (0.2f, Pitch(-1.3f)), (0.8f, Pitch(-1.3f)));
+        AddRotationTrack(animation, "spine",
+            (0f, Pitch(0f)), (0.2f, Pitch(0.12f)), (0.8f, Pitch(0.12f)));
+        return animation;
+    }
+
+    private static Animation BuildEmoteClap()
+    {
+        var animation = NewAnimation(1.0f, loop: false);
+        AddRotationTrack(animation, "upperarm.L",
+            (0f, Roll(0.14f)),
+            (0.15f, Roll(1.3f)),
+            (0.35f, Roll(0.3f)),
+            (0.55f, Roll(1.3f)),
+            (0.75f, Roll(0.3f)),
+            (1.0f, Roll(0.14f)));
+        AddRotationTrack(animation, "upperarm.R",
+            (0f, Roll(-0.14f)),
+            (0.15f, Roll(-1.3f)),
+            (0.35f, Roll(-0.3f)),
+            (0.55f, Roll(-1.3f)),
+            (0.75f, Roll(-0.3f)),
+            (1.0f, Roll(-0.14f)));
+        return animation;
+    }
+
+    private static Animation BuildEmoteCheer()
+    {
+        var animation = NewAnimation(1.0f, loop: false);
+        AddRotationTrack(animation, "upperarm.L",
+            (0f, Roll(0.14f)), (0.2f, Roll(2.7f)), (0.5f, Roll(2.5f)), (0.8f, Roll(2.7f)), (1.0f, Roll(2.6f)));
+        AddRotationTrack(animation, "upperarm.R",
+            (0f, Roll(-0.14f)), (0.2f, Roll(-2.7f)), (0.5f, Roll(-2.5f)), (0.8f, Roll(-2.7f)), (1.0f, Roll(-2.6f)));
+        AddRotationTrack(animation, "hips",
+            (0f, Pitch(0f)), (0.25f, Pitch(0.08f)), (0.5f, Pitch(0f)), (0.75f, Pitch(0.08f)), (1.0f, Pitch(0f)));
+        return animation;
+    }
+
+    private static Animation BuildEmoteSit()
+    {
+        // Looping: the seat pose must persist until StopAction(), so key 0 == key length
+        // for every bone here, matching BuildIdle/BuildStride.
+        var animation = NewAnimation(2.0f, loop: true);
+        AddRotationTrack(animation, "thigh.L", (0f, Pitch(1.45f)), (2.0f, Pitch(1.45f)));
+        AddRotationTrack(animation, "thigh.R", (0f, Pitch(1.45f)), (2.0f, Pitch(1.45f)));
+        AddRotationTrack(animation, "shin.L", (0f, Pitch(-1.5f)), (2.0f, Pitch(-1.5f)));
+        AddRotationTrack(animation, "shin.R", (0f, Pitch(-1.5f)), (2.0f, Pitch(-1.5f)));
+        AddRotationTrack(animation, "spine",
+            (0f, Pitch(-0.1f)), (1.0f, Pitch(-0.07f)), (2.0f, Pitch(-0.1f)));
+        return animation;
+    }
+
+    private static Animation BuildEmoteDance()
+    {
+        // Looping: same seam requirement as BuildEmoteSit, applied to every bone below.
+        var animation = NewAnimation(1.6f, loop: true);
+        AddRotationTrack(animation, "hips",
+            (0f, Roll(0f)), (0.4f, Roll(0.18f)), (0.8f, Roll(0f)), (1.2f, Roll(-0.18f)), (1.6f, Roll(0f)));
+        AddRotationTrack(animation, "upperarm.L",
+            (0f, Roll(0.14f)), (0.4f, Roll(1.0f)), (0.8f, Roll(0.14f)), (1.2f, Roll(1.0f)), (1.6f, Roll(0.14f)));
+        AddRotationTrack(animation, "upperarm.R",
+            (0f, Roll(-0.14f)), (0.4f, Roll(-1.0f)), (0.8f, Roll(-0.14f)), (1.2f, Roll(-1.0f)), (1.6f, Roll(-0.14f)));
+        AddRotationTrack(animation, "thigh.L",
+            (0f, Pitch(0.15f)), (0.4f, Pitch(-0.15f)), (0.8f, Pitch(0.15f)), (1.2f, Pitch(-0.15f)), (1.6f, Pitch(0.15f)));
+        AddRotationTrack(animation, "thigh.R",
+            (0f, Pitch(-0.15f)), (0.4f, Pitch(0.15f)), (0.8f, Pitch(-0.15f)), (1.2f, Pitch(0.15f)), (1.6f, Pitch(-0.15f)));
         return animation;
     }
 
