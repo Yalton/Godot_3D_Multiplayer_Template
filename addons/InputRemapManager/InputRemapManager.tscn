@@ -4,7 +4,7 @@
 
 [node name="InputRemapManager" type="Node"]
 script = ExtResource("1")
-RebindableActionsOverride = PackedStringArray("move_forward", "move_back", "move_left", "move_right", "jump", "interact", "push_to_talk", "network_debug", "pause", "toggle_dev_console", "toggle_camera", "player_list")
+RebindableActionsOverride = PackedStringArray("move_forward", "move_back", "move_left", "move_right", "jump", "interact", "push_to_talk", "network_debug", "pause", "toggle_dev_console", "toggle_camera", "player_list", "emote_wheel")
 DisplayNameOverrides = {
 "move_forward": "Move Forward",
 "move_back": "Move Backward",
@@ -12,5 +12,6 @@ DisplayNameOverrides = {
 "network_debug": "Network Debug Overlay",
 "toggle_dev_console": "Developer Console",
 "toggle_camera": "Toggle Camera View",
-"player_list": "Player List"
+"player_list": "Player List",
+"emote_wheel": "Emote Wheel"
 }
