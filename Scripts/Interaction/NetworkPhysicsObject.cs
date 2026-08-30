@@ -1,5 +1,6 @@
 using Godot;
 using MultiplayerTemplate.Game;
+using MultiplayerTemplate.Network;
 
 namespace MultiplayerTemplate.Interaction;
 
@@ -47,7 +48,10 @@ public partial class NetworkPhysicsObject : RigidBody3D
         if (_snapshotAccumulator >= 1.0 / 20.0)
         {
             _snapshotAccumulator = 0;
-            Rpc(nameof(ReceiveSnapshot), GlobalPosition, GlobalBasis.GetRotationQuaternion(), LinearVelocity);
+            // Only peers with the match scene mounted have this node; a peer still loading
+            // has no counterpart, and Godot logs "Node not found" if it is targeted anyway.
+            foreach (var peerId in MatchSceneRpc.ReadyPeers(this))
+                RpcId(peerId, nameof(ReceiveSnapshot), GlobalPosition, GlobalBasis.GetRotationQuaternion(), LinearVelocity);
         }
     }
 
@@ -78,7 +82,9 @@ public partial class NetworkPhysicsObject : RigidBody3D
     {
         HeldByPeer = peerId;
         GravityScale = peerId == 0 ? 1f : 0f;
-        Rpc(nameof(ReceiveHeld), peerId);
+        // Only peers with the match scene mounted have this node; see ReceiveSnapshot above.
+        foreach (var readyPeerId in MatchSceneRpc.ReadyPeers(this))
+            RpcId(readyPeerId, nameof(ReceiveHeld), peerId);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,

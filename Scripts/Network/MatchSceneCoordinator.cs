@@ -24,6 +24,11 @@ public partial class MatchSceneCoordinator : Node
 
     public int LoadedSceneCount => _matchContainer?.GetChildCount() ?? 0;
 
+    // Meaningful on the server only: _waitingFor is never populated on clients, so this
+    // would report every peer as "ready" there. Match-scene RPC senders use this to avoid
+    // targeting a peer that has not yet mounted the scene and so has no such node.
+    public bool IsSceneReady(long peerId) => !_waitingFor.Contains(peerId);
+
     public override void _Ready()
     {
         Instance = this;

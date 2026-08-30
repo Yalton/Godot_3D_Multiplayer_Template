@@ -1,4 +1,5 @@
 using Godot;
+using MultiplayerTemplate.Network;
 
 namespace MultiplayerTemplate.Interaction;
 
@@ -14,7 +15,13 @@ public partial class NetworkInteractable : StaticBody3D
     public virtual void ServerInteract(long peerId)
     {
         if (!Multiplayer.IsServer()) return;
-        Rpc(nameof(SetActive), !Active);
+        var active = !Active;
+        // SetActive is [Rpc(CallLocal = true)], so the server applied its own state via the
+        // broadcast below. Only peers with the match scene mounted have this node, so the
+        // server must now apply it directly and send to ready peers explicitly instead.
+        SetActive(active);
+        foreach (var readyPeerId in MatchSceneRpc.ReadyPeers(this))
+            RpcId(readyPeerId, nameof(SetActive), active);
     }
 
     /// <summary>Server-side: brings a late joiner up to date with the current state.</summary>
