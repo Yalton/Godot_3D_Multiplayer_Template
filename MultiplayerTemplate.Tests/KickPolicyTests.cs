@@ -4,10 +4,16 @@ namespace MultiplayerTemplate.Tests;
 
 public sealed class KickPolicyTests
 {
-    [Fact]
-    public void HostMayKickAKnownClient()
+    [Theory]
+    [InlineData(1, 42, true, true)]
+    [InlineData(1, 2, true, true)]
+    [InlineData(1, 100, true, true)]
+    [InlineData(7, 42, true, true)]
+    [InlineData(7, 999, true, true)]
+    public void HostMayKickAKnownClient(
+        long senderPeerId, long targetPeerId, bool senderIsHost, bool targetIsKnown)
     {
-        Assert.True(KickPolicy.CanKick(1, 42, true, true));
+        Assert.True(KickPolicy.CanKick(senderPeerId, targetPeerId, senderIsHost, targetIsKnown));
     }
 
     [Fact]

@@ -20,6 +20,15 @@ public sealed class AfkPolicyTests
     }
 
     [Fact]
+    public void ExitSecondsBoundaryIsExclusive()
+    {
+        // Exactly ExitSeconds must NOT be enough to keep a player flagged away; the
+        // comparison in AfkPolicy.Evaluate is a strict `>`, not `>=`.
+        Assert.False(AfkPolicy.Evaluate(AfkPolicy.ExitSeconds, 90, true));
+        Assert.True(AfkPolicy.Evaluate(AfkPolicy.ExitSeconds + 0.001, 90, true));
+    }
+
+    [Fact]
     public void NonPositiveThresholdDisablesAfk()
     {
         Assert.False(AfkPolicy.Evaluate(9999, 0, false));

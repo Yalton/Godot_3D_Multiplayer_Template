@@ -344,7 +344,8 @@ public partial class NetworkSmoke : Node
         var success = _requestedRogueKick &&
                       SessionManager.Instance.State == SessionManager.SessionState.Lobby;
         GD.Print(success
-            ? "SMOKE KICK ROGUE PASS (unauthorized request did not remove anyone)"
+            ? "SMOKE KICK ROGUE PASS (rogue's own unauthorized request did not get it " +
+              "disconnected; SMOKE KICK SERVER is what proves no one else was removed)"
             : $"SMOKE KICK ROGUE FAIL attempted={_requestedRogueKick}, " +
               $"state={SessionManager.Instance.State}");
         SessionManager.Instance.DisconnectSession(false);

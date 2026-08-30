@@ -24,6 +24,13 @@ public partial class PlayerRow : HBoxContainer
     private Label _quality = null!;
     private long _peerId;
     private PlayerRowOptions _options;
+    private bool _nameInitialized;
+    private string? _lastDisplayName;
+    private bool _lastIsHost;
+    private bool _lastReady;
+    private bool _lastAfk;
+    private bool _lastSpeaking;
+    private string? _lastPlatform;
 
     public void Configure(PlayerIdentity identity, PlayerRowOptions options)
     {
@@ -43,6 +50,9 @@ public partial class PlayerRow : HBoxContainer
 
         _name = new Label { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         AddChild(_name);
+        // A freshly (re)built Label has no text yet, so force WriteName to write
+        // regardless of what the cache below thinks the last-rendered inputs were.
+        _nameInitialized = false;
         WriteName(identity);
 
         _quality = new Label
@@ -126,14 +136,31 @@ public partial class PlayerRow : HBoxContainer
 
     private void WriteName(PlayerIdentity identity)
     {
+        var speaking = PositionalVoiceChat.Instance != null &&
+                       PositionalVoiceChat.Instance.IsSpeaking(identity.PeerId);
+        if (_nameInitialized &&
+            identity.DisplayName == _lastDisplayName &&
+            identity.IsHost == _lastIsHost &&
+            identity.Ready == _lastReady &&
+            identity.Afk == _lastAfk &&
+            speaking == _lastSpeaking &&
+            identity.Platform == _lastPlatform)
+        {
+            return;
+        }
         var host = identity.IsHost ? " ★ HOST" : "";
         var ready = _options.ShowReady ? identity.Ready ? "    READY" : "    NOT READY" : "";
         var away = identity.Afk ? "  (away)" : "";
-        var speaking = PositionalVoiceChat.Instance != null &&
-                       PositionalVoiceChat.Instance.IsSpeaking(identity.PeerId)
-            ? "  <))"
-            : "";
-        _name.Text = $"{identity.DisplayName}{host}{ready}{away}{speaking}    [{identity.Platform}]";
+        var speakingText = speaking ? "  <))" : "";
+        _name.Text =
+            $"{identity.DisplayName}{host}{ready}{away}{speakingText}    [{identity.Platform}]";
+        _lastDisplayName = identity.DisplayName;
+        _lastIsHost = identity.IsHost;
+        _lastReady = identity.Ready;
+        _lastAfk = identity.Afk;
+        _lastSpeaking = speaking;
+        _lastPlatform = identity.Platform;
+        _nameInitialized = true;
     }
 
     private static Button TextButton(string text, Action pressed)

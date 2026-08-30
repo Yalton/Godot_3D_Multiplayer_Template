@@ -127,6 +127,23 @@ For local controls, use `LocalInputContext.Instance.GameplaySuppressed` instead 
 individual menus. Register modal UI with `SetBlocked(owner, true)` while it is open and clear
 the same owner when it closes.
 
+## Replicated state must match its owner's lifetime
+
+When you add replicated state, the node that writes it must live at least as long as the
+state's scope, or something longer-lived must reset it when the shorter-lived owner appears.
+Otherwise a value written by a node that no longer exists just sits there unchanged, because
+nothing observes a change to publish.
+
+`PlayerIdentity.Afk` is the worked example: it lives on the session-scoped roster in
+`SessionManager`, but it is only ever written by the match-scoped `NetworkPlayer` while idle
+time is being tracked. A player flagged away in one match would stay flagged away in the
+lobby and into the next match, because the fresh `NetworkPlayer` that replaces the old one on
+the next spawn starts from its own `false` and has no reason to publish a change. This is
+handled today in `NetworkPlayer._Ready`, which clears the roster flag
+(`SessionManager.Instance.SetAfkServer(PeerId, false)`) on the server the moment a player node
+spawns — the session-scoped value is reset by whichever node currently owns writing it,
+rather than trusting whatever the previous owner last published.
+
 ## Dedicated servers
 
 Start ENet hosting without client UI or audio capture:

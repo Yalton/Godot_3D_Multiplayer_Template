@@ -15,6 +15,10 @@ public partial class PlayerNameplate : Label3D
 
     private long _peerId;
     private bool _isLocal;
+    private bool _textInitialized;
+    private string? _lastDisplayName;
+    private bool _lastAfk;
+    private bool _lastSpeaking;
 
     public void Initialize(long peerId, bool isLocal)
     {
@@ -38,11 +42,19 @@ public partial class PlayerNameplate : Label3D
         var identity = PlayerIdentityService.Instance.Get(_peerId);
         var speaking = PositionalVoiceChat.Instance != null &&
                        PositionalVoiceChat.Instance.IsSpeaking(_peerId);
-        Text = identity.Afk
-            ? $"{identity.DisplayName}  (away)"
-            : speaking
-                ? $"{identity.DisplayName}  <))"
-                : identity.DisplayName;
+        if (!_textInitialized || identity.DisplayName != _lastDisplayName ||
+            identity.Afk != _lastAfk || speaking != _lastSpeaking)
+        {
+            Text = identity.Afk
+                ? $"{identity.DisplayName}  (away)"
+                : speaking
+                    ? $"{identity.DisplayName}  <))"
+                    : identity.DisplayName;
+            _lastDisplayName = identity.DisplayName;
+            _lastAfk = identity.Afk;
+            _lastSpeaking = speaking;
+            _textInitialized = true;
+        }
         var alpha = 1f;
         if (GetViewport().GetCamera3D() is { } camera)
         {
