@@ -49,6 +49,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private bool _afk;
     private bool _afkKickRequested;
     private bool _awaitingEmoteStart;
+    private double _emoteStartDeadline;
 
     private readonly record struct PredictedInput(
         uint Sequence, Vector2 Move, bool Jump, float Yaw, float Delta);
@@ -173,7 +174,11 @@ public partial class NetworkPlayer : CharacterBody3D
             // PlayAction only queues a Fire request; ActionPlaying stays false until the
             // AnimationTree processes it. Without this latch the pop below would fire on
             // the same frame as the push and snap the camera back before the clip shows.
-            if (_awaitingEmoteStart && _avatar.ActionPlaying) _awaitingEmoteStart = false;
+            // A rig that does not define the clip never fires it, so ActionPlaying would
+            // never go true; the deadline bounds how long the latch can hold the camera.
+            if (_awaitingEmoteStart &&
+                (_avatar.ActionPlaying || Time.GetTicksMsec() / 1000.0 >= _emoteStartDeadline))
+                _awaitingEmoteStart = false;
             else if (!_awaitingEmoteStart && !_avatar.ActionPlaying &&
                      ActiveEmote == EmoteCatalogue.None) _view.PopTemporary("emote");
         }
@@ -424,6 +429,10 @@ public partial class NetworkPlayer : CharacterBody3D
         {
             _view.PushTemporaryThirdPerson("emote");
             _awaitingEmoteStart = true;
+            // A rig that does not define this clip never fires, so ActionPlaying would
+            // never go true and the latch would strand the camera in third person.
+            // Bound the wait.
+            _emoteStartDeadline = Time.GetTicksMsec() / 1000.0 + 0.5;
         }
     }
 
