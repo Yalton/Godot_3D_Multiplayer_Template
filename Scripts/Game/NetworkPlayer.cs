@@ -319,8 +319,12 @@ public partial class NetworkPlayer : CharacterBody3D
         _snapshotAccumulator += delta;
         if (_snapshotAccumulator < 1.0 / SnapshotRate) return;
         _snapshotAccumulator = 0;
-        Rpc(nameof(ReceiveSnapshot), GlobalPosition, Velocity, Rotation.Y, _serverPitch, IsOnFloor(),
-            _lastReceivedSequence);
+        // A peer that has joined but not yet processed its SpawnPlayer message has no
+        // node for this player, and Godot logs "Node not found" if it is targeted anyway.
+        // See MatchSceneRpc / NetworkPhysicsObject for the same defect fixed earlier.
+        foreach (var peerId in MatchSceneRpc.ReadyPeers(this))
+            RpcId(peerId, nameof(ReceiveSnapshot), GlobalPosition, Velocity, Rotation.Y, _serverPitch, IsOnFloor(),
+                _lastReceivedSequence);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
@@ -412,9 +416,14 @@ public partial class NetworkPlayer : CharacterBody3D
 
     public void PlayEmoteLocally(int id)
     {
-        if (_avatar == null) return;
+        // Mirrors ActiveEmote exactly as ReceiveEmote does, and — like ReceiveEmote — does
+        // it unconditionally, before any avatar-dependent early return below. A headless
+        // peer never builds an AvatarRig (see AvatarFactory.Build), so gating this on
+        // _avatar would silently skip the mirror for every headless client.
         if (id == EmoteCatalogue.None)
         {
+            if (!Multiplayer.IsServer()) ActiveEmote = EmoteCatalogue.None;
+            if (_avatar == null) return;
             _avatar.StopAction();
             if (IsLocalPlayer)
             {
@@ -423,7 +432,9 @@ public partial class NetworkPlayer : CharacterBody3D
             }
             return;
         }
-        if (!EmoteCatalogue.TryGet(id, out var definition)) return;
+        var found = EmoteCatalogue.TryGet(id, out var definition);
+        if (!Multiplayer.IsServer()) ActiveEmote = found && definition.Looping ? id : EmoteCatalogue.None;
+        if (!found || _avatar == null) return;
         _avatar.PlayAction(definition.Clip);
         if (IsLocalPlayer)
         {
