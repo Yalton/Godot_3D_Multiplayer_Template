@@ -48,6 +48,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private double _lastInputSeconds;
     private bool _afk;
     private bool _afkKickRequested;
+    private bool _awaitingEmoteStart;
 
     private readonly record struct PredictedInput(
         uint Sequence, Vector2 Move, bool Jump, float Yaw, float Delta);
@@ -167,8 +168,15 @@ public partial class NetworkPlayer : CharacterBody3D
             _view.ApplyPitch(_pitch);
             Velocity = _targetVelocity;
         }
-        if (IsLocalPlayer && _avatar is { ActionPlaying: false } &&
-            ActiveEmote == EmoteCatalogue.None) _view.PopTemporary("emote");
+        if (IsLocalPlayer && _avatar != null)
+        {
+            // PlayAction only queues a Fire request; ActionPlaying stays false until the
+            // AnimationTree processes it. Without this latch the pop below would fire on
+            // the same frame as the push and snap the camera back before the clip shows.
+            if (_awaitingEmoteStart && _avatar.ActionPlaying) _awaitingEmoteStart = false;
+            else if (!_awaitingEmoteStart && !_avatar.ActionPlaying &&
+                     ActiveEmote == EmoteCatalogue.None) _view.PopTemporary("emote");
+        }
         UpdateAvatarAnimation(step);
     }
 
@@ -403,12 +411,20 @@ public partial class NetworkPlayer : CharacterBody3D
         if (id == EmoteCatalogue.None)
         {
             _avatar.StopAction();
-            if (IsLocalPlayer) _view.PopTemporary("emote");
+            if (IsLocalPlayer)
+            {
+                _view.PopTemporary("emote");
+                _awaitingEmoteStart = false;
+            }
             return;
         }
         if (!EmoteCatalogue.TryGet(id, out var definition)) return;
         _avatar.PlayAction(definition.Clip);
-        if (IsLocalPlayer) _view.PushTemporaryThirdPerson("emote");
+        if (IsLocalPlayer)
+        {
+            _view.PushTemporaryThirdPerson("emote");
+            _awaitingEmoteStart = true;
+        }
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
