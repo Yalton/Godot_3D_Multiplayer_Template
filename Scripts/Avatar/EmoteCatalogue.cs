@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace MultiplayerTemplate.Avatar;
 
 /// <summary>One emote. <see cref="Clip"/> must name an animation the rig defines.</summary>
@@ -27,7 +29,11 @@ public static class EmoteCatalogue
         new(6, "emote_dance", "Dance", true),
     ];
 
-    public static IReadOnlyList<EmoteDefinition> All => Entries;
+    // ReadOnlyCollection is a real barrier; returning the array as IReadOnlyList is not,
+    // because a caller can cast it back. This table is the server's validation.
+    private static readonly ReadOnlyCollection<EmoteDefinition> Catalogue = new(Entries);
+
+    public static IReadOnlyList<EmoteDefinition> All => Catalogue;
 
     public static bool TryGet(int id, out EmoteDefinition definition)
     {

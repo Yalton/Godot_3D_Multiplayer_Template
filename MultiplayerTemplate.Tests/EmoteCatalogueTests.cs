@@ -51,4 +51,10 @@ public sealed class EmoteCatalogueTests
     {
         Assert.DoesNotContain(EmoteCatalogue.All, entry => entry.Id == 0);
     }
+
+    [Fact]
+    public void AllCannotBeCastBackToAMutableArray()
+    {
+        Assert.IsNotType<EmoteDefinition[]>(EmoteCatalogue.All);
+    }
 }
