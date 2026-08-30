@@ -27,6 +27,12 @@ public partial class MatchSceneCoordinator : Node
     // Meaningful on the server only: _waitingFor is never populated on clients, so this
     // would report every peer as "ready" there. Match-scene RPC senders use this to avoid
     // targeting a peer that has not yet mounted the scene and so has no such node.
+    // One residual window remains: a peer appears in Multiplayer.GetPeers() as soon as its
+    // transport connects, but only enters _waitingFor when its RegisterPlayer RPC reaches
+    // HandleLateJoin. In that gap it reads as ready while holding no scene. That is one RPC
+    // round trip rather than a whole scene load, so a stray dropped packet there is
+    // survivable; close it only if you make the roster authoritative before the peer is
+    // addressable.
     public bool IsSceneReady(long peerId) => !_waitingFor.Contains(peerId);
 
     public override void _Ready()

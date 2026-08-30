@@ -42,6 +42,7 @@ public partial class NetworkPlayer : CharacterBody3D
     private (Vector3 Position, Vector3 Velocity, float Yaw, float Error)? _pendingCorrection;
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
+    private readonly RpcCooldowns _rejectLog = new();
     private double _lastInputSeconds;
     private bool _afk;
     private bool _afkKickRequested;
@@ -314,7 +315,11 @@ public partial class NetworkPlayer : CharacterBody3D
                 SessionManager.SessionState.Playing)) return;
         if (!move.IsFinite() || !float.IsFinite(yaw) || !float.IsFinite(pitch))
         {
-            RpcSecurity.Reject(nameof(SubmitInput), sender, "non-finite input values");
+            // Always drop the packet, but log at most once a second per peer. Input arrives
+            // at the physics rate, so a client sending NaN every tick would otherwise emit
+            // ~60 warnings a second — and warnings are no longer suppressible.
+            if (_rejectLog.TryConsume(sender, nameof(SubmitInput), 1000))
+                RpcSecurity.Reject(nameof(SubmitInput), sender, "non-finite input values");
             return;
         }
         if (sequence <= _lastReceivedSequence) return;
