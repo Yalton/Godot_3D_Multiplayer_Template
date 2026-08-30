@@ -333,11 +333,31 @@ public partial class DebugLogger : Node
 
 	public void LogMessage(string moduleName, string message, LogLevel level = LogLevel.Debug)
 	{
+		string levelText = GetLevelText(level);
+		string formattedMessage = $"[{moduleName}][{levelText}] {message}";
+
+		// Warnings and errors are never suppressed. DebugEnabled defaults to false outside
+		// a dev build, so gating them would make an exported game silent about the very
+		// problems its player needs reported — a rejected avatar scene, a refused RPC, a
+		// failed transport. They also go through Godot's own channels so they surface in
+		// the editor and in the crash log, not just stdout.
+		if (level == LogLevel.Warning)
+		{
+			GD.PushWarning(formattedMessage);
+			GD.Print(formattedMessage);
+			return;
+		}
+		if (level == LogLevel.ErrorLevel)
+		{
+			GD.PushError(formattedMessage);
+			GD.PrintErr(formattedMessage);
+			return;
+		}
+
+		// Info and Debug remain opt-in per module, as before.
 		if (!IsModuleEnabled(moduleName))
 			return;
 
-		string levelText = GetLevelText(level);
-		string formattedMessage = $"[{moduleName}][{levelText}] {message}";
 		GD.Print(formattedMessage);
 	}
 
