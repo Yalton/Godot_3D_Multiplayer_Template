@@ -41,6 +41,11 @@ public partial class PlayerCamera : Node3D
         AddChild(_arm);
         _camera = new Camera3D { Name = "Camera3D", Fov = SettingsManager.Instance.GetFov() };
         _arm.AddChild(_camera);
+        // The pivot itself is still needed server-side: HoldPosition, EyePosition, AimOrigin
+        // and AimForward all read off this node for held-object placement and server-validated
+        // interaction raycasts. But the spring arm's per-physics-frame shape query only keeps
+        // a camera out of walls, and a headless server never renders one, so disable it there.
+        if (DisplayServer.GetName() == "headless") _arm.ProcessMode = ProcessModeEnum.Disabled;
     }
 
     public void Initialize(bool isLocal, AvatarRig? rig)

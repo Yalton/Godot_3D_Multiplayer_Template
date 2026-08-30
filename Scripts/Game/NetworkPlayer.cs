@@ -275,8 +275,12 @@ public partial class NetworkPlayer : CharacterBody3D
     private void UpdateAfk()
     {
         if (!Multiplayer.IsServer()) return;
+        // A dedicated server spawns a NetworkPlayer for its own phantom peer-1 entry, and
+        // nothing ever feeds it input. A listen-server host is a real player behind peer 1
+        // and must still be tracked, so only exempt the headless case.
+        if (SessionManager.Instance.IsDedicatedServer && PeerId == 1) return;
         var idleSeconds = Time.GetTicksMsec() / 1000.0 - _lastInputSeconds;
-        var afk = AfkPolicy.Evaluate(idleSeconds, AfkPolicy.DefaultThresholdSeconds, _afk);
+        var afk = AfkPolicy.Evaluate(idleSeconds, SessionManager.Instance.AfkSeconds, _afk);
         if (afk != _afk)
         {
             _afk = afk;

@@ -2,6 +2,7 @@ using Godot;
 using Godot.Collections;
 using PlayerRoster = Godot.Collections.Dictionary<long, Godot.Collections.Dictionary>;
 using DebugLoggerKit;
+using MultiplayerTemplate.Game;
 
 namespace MultiplayerTemplate.Network;
 
@@ -30,6 +31,7 @@ public partial class SessionManager : Node
     public string ServerName { get; set; } = "LAN Game";
     public int MaxPlayers { get; set; } = 8;
     public double AfkKickSeconds { get; private set; }
+    public double AfkSeconds { get; private set; } = AfkPolicy.DefaultThresholdSeconds;
     public bool MatchActive { get; private set; }
     public bool IsDedicatedServer { get; private set; }
     public SessionState State { get; private set; } = SessionState.Offline;
@@ -441,6 +443,8 @@ public partial class SessionManager : Node
             ServerName = config.GetValue("server", "name", ServerName).AsString();
             MaxPlayers = Math.Clamp(config.GetValue("server", "max_players", MaxPlayers).AsInt32(), 1, 64);
             AfkKickSeconds = Math.Max(0, config.GetValue("server", "afk_kick_seconds", 0).AsDouble());
+            AfkSeconds = Math.Max(0,
+                config.GetValue("server", "afk_seconds", AfkPolicy.DefaultThresholdSeconds).AsDouble());
         }
         foreach (var arg in args)
         {
@@ -452,7 +456,7 @@ public partial class SessionManager : Node
         if (IsDedicatedServer)
             DebugLogger.Instance.Info(LogModule,
                 $"Dedicated server configuration: name='{ServerName}', max={MaxPlayers}, " +
-                $"afk_kick_seconds={AfkKickSeconds}");
+                $"afk_kick_seconds={AfkKickSeconds}, afk_seconds={AfkSeconds}");
     }
 
     public override void _Notification(int what)

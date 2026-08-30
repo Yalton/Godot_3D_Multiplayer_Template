@@ -6,5 +6,9 @@ max_players=8
 # Seconds of no input before the server kicks an idle player. 0 disables it.
 afk_kick_seconds=0
 
+# Seconds of no input before the server marks a player away in the roster.
+# Defaults to 90. 0 disables AFK marking entirely.
+afk_seconds=90
+
 # Port remains a command-line setting so multiple instances can share one config:
 # godot --headless --path . --server --port=8910 --config=res://server.cfg
