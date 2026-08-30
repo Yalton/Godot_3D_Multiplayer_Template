@@ -98,4 +98,10 @@ public sealed class RpcCooldowns
         _nextAllowed[key] = now + cooldownMs;
         return true;
     }
+
+    public void Forget(long peerId)
+    {
+        foreach (var key in _nextAllowed.Keys.Where(key => key.Peer == peerId).ToArray())
+            _nextAllowed.Remove(key);
+    }
 }

@@ -11,6 +11,8 @@ public readonly record struct QuickChatLine(int Id, string Text);
 /// </summary>
 public static class QuickChatLines
 {
+    public const int None = 0;
+
     private static readonly QuickChatLine[] Entries =
     [
         new(1, "Hello!"),

@@ -27,6 +27,7 @@ public partial class NetworkSmoke : Node
     private bool _clockSynchronized;
     private bool _qualitySampled;
     private bool _securityHelpersPassed;
+    private bool _emoteClipsResolved;
     private bool _hostDisconnected;
     private bool _sawChat;
     private bool _sawPhysicsInteraction;
@@ -79,6 +80,7 @@ public partial class NetworkSmoke : Node
         };
         _securityHelpersPassed = CheckSecurityHelpers();
         _identityRoundTripPassed = CheckIdentityRoundTrip();
+        _emoteClipsResolved = CheckEmoteClipsResolve();
         if (_role == "server")
         {
             SessionManager.Instance.PlayerName = "SmokeHost";
@@ -510,10 +512,12 @@ public partial class NetworkSmoke : Node
 
     private void FinishEmoteServer()
     {
-        var success = _sawPlaying && SessionManager.Instance.Players.Count == 1;
+        var success = _sawPlaying && SessionManager.Instance.Players.Count == 1 && _emoteClipsResolved;
         GD.Print(success
-            ? "SMOKE EMOTE SERVER PASS (hosted the sit/late-join/bad-id scenarios)"
-            : $"SMOKE EMOTE SERVER FAIL playing={_sawPlaying}, roster={SessionManager.Instance.Players}");
+            ? "SMOKE EMOTE SERVER PASS (hosted the sit/late-join/bad-id scenarios; every " +
+              "EmoteCatalogue clip resolves against the built animation library)"
+            : $"SMOKE EMOTE SERVER FAIL playing={_sawPlaying}, roster={SessionManager.Instance.Players}, " +
+              $"emoteClipsResolved={_emoteClipsResolved}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }
@@ -574,6 +578,19 @@ public partial class NetworkSmoke : Node
         var distance = RpcSecurity.WithinDistance(Vector3.Zero, new Vector3(3, 0, 0), 4,
             "test", 7);
         return limited && cooled && distance;
+    }
+
+    // The clip-name contract between ProceduralAnimationLibrary and EmoteCatalogue is
+    // otherwise unchecked: Godot silently ignores an unresolvable animation name, so a typo
+    // in either table would leave a motionless character with no error, a green build, and
+    // a green unit-test suite. This runs inside the real engine NetworkSmoke already has,
+    // building the library once and confirming every catalogue row's clip actually resolves.
+    private static bool CheckEmoteClipsResolve()
+    {
+        var library = ProceduralAnimationLibrary.Build();
+        foreach (var entry in EmoteCatalogue.All)
+            if (!library.HasAnimation(entry.Clip)) return false;
+        return true;
     }
 
     private static bool CheckIdentityRoundTrip()

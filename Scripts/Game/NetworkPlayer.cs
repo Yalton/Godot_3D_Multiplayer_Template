@@ -126,8 +126,8 @@ public partial class NetworkPlayer : CharacterBody3D
             {
                 var local = ReadLocalInput();
                 NoteActivity(local.Move, local.Jump, _yaw);
-                if (ActiveEmote != EmoteCatalogue.None &&
-                    (local.Move.LengthSquared() > 0f || local.Jump)) SetEmoteServer(EmoteCatalogue.None);
+                if (ActiveEmote != EmoteCatalogue.None && IsMoving(local.Move, local.Jump))
+                    SetEmoteServer(EmoteCatalogue.None);
                 _serverMoveInput = local.Move;
                 _serverJump = local.Jump;
                 _serverYaw = _yaw;
@@ -292,6 +292,11 @@ public partial class NetworkPlayer : CharacterBody3D
         _lastInputSeconds = Time.GetTicksMsec() / 1000.0;
     }
 
+    // Deliberately narrower than NoteActivity's notion of activity: NoteActivity also
+    // counts a yaw change, so an AFK player is still "active" while looking around, but
+    // merely looking around must not cancel a sit.
+    private static bool IsMoving(Vector2 move, bool jump) => move.LengthSquared() > 0f || jump;
+
     private void UpdateAfk()
     {
         if (!Multiplayer.IsServer()) return;
@@ -352,10 +357,10 @@ public partial class NetworkPlayer : CharacterBody3D
         _serverJump |= jump;
         _serverYaw = Mathf.Wrap(yaw, -Mathf.Pi, Mathf.Pi);
         _serverPitch = Mathf.Clamp(pitch, -PitchLimit, PitchLimit);
-        // Movement ends a looping emote. NoteActivity already decides what counts as the
-        // player doing something; reuse that rather than inventing a second notion.
-        if (ActiveEmote != EmoteCatalogue.None &&
-            (move.LengthSquared() > 0f || jump)) SetEmoteServer(EmoteCatalogue.None);
+        // Movement ends a looping emote. This intentionally does not reuse NoteActivity:
+        // see IsMoving.
+        if (ActiveEmote != EmoteCatalogue.None && IsMoving(move, jump))
+            SetEmoteServer(EmoteCatalogue.None);
     }
 
     public void RequestEmote(int id)
@@ -371,9 +376,23 @@ public partial class NetworkPlayer : CharacterBody3D
     {
         if (!RpcSecurity.RequireServer(this, nameof(SubmitEmote))) return;
         var sender = Multiplayer.GetRemoteSenderId();
-        if (!RpcSecurity.RequireSender(sender, PeerId, nameof(SubmitEmote)) ||
-            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(SubmitEmote),
-                SessionManager.SessionState.Playing)) return;
+        // Throttled like the rate-limit and unknown-id rejects in SubmitEmoteServer below:
+        // a modified client can target another player's node and would otherwise emit one
+        // unsuppressible warning per packet. Only the logging is throttled — the request
+        // is still always refused.
+        if (sender != PeerId)
+        {
+            if (_rejectLog.TryConsume(sender, nameof(SubmitEmote), 1000))
+                RpcSecurity.Reject(nameof(SubmitEmote), sender, $"sender does not own peer {PeerId}");
+            return;
+        }
+        if (SessionManager.Instance.State != SessionManager.SessionState.Playing)
+        {
+            if (_rejectLog.TryConsume(sender, nameof(SubmitEmote), 1000))
+                RpcSecurity.Reject(nameof(SubmitEmote), sender,
+                    $"invalid session state {SessionManager.Instance.State}");
+            return;
+        }
         SubmitEmoteServer(sender, id);
     }
 

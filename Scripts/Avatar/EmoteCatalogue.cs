@@ -19,14 +19,20 @@ public static class EmoteCatalogue
 {
     public const int None = 0;
 
+    // Referencing ProceduralAnimationLibrary here does not reintroduce an engine
+    // dependency: EmoteWave..EmoteDance are `const string`, and the C# compiler inlines a
+    // compile-time constant's value into this assembly at build time, so no Godot type is
+    // ever loaded at runtime and the xUnit suite still cannot crash. If those are ever
+    // changed to `static readonly`, this silently starts loading Godot.AnimationLibrary's
+    // declaring assembly the moment this class is touched — do not "tidy" them that way.
     private static readonly EmoteDefinition[] Entries =
     [
-        new(1, "emote_wave", "Wave", false),
-        new(2, "emote_point", "Point", false),
-        new(3, "emote_clap", "Clap", false),
-        new(4, "emote_cheer", "Cheer", false),
-        new(5, "emote_sit", "Sit", true),
-        new(6, "emote_dance", "Dance", true),
+        new(1, ProceduralAnimationLibrary.EmoteWave, "Wave", false),
+        new(2, ProceduralAnimationLibrary.EmotePoint, "Point", false),
+        new(3, ProceduralAnimationLibrary.EmoteClap, "Clap", false),
+        new(4, ProceduralAnimationLibrary.EmoteCheer, "Cheer", false),
+        new(5, ProceduralAnimationLibrary.EmoteSit, "Sit", true),
+        new(6, ProceduralAnimationLibrary.EmoteDance, "Dance", true),
     ];
 
     // ReadOnlyCollection is a real barrier; returning the array as IReadOnlyList is not,

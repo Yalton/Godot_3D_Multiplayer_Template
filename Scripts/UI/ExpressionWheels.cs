@@ -21,9 +21,18 @@ namespace MultiplayerTemplate.UI;
 /// flowing while this is open — no <see cref="LocalInputContext"/> blocker is ever set. The
 /// wheel consumes only the exact mouse motion that would otherwise turn the camera, and only
 /// for as long as it is held.
+///
+/// It still reads <see cref="LocalInputContext.GameplaySuppressed"/>, though: a wheel must
+/// never open while chat, the dev console, or a rebind is capturing input, and one already
+/// open must close itself — without committing — the instant a menu suppresses gameplay
+/// mid-hold. Reading the flag is not the same as setting a blocker; this never calls
+/// <c>SetBlocked</c>.
 /// </summary>
 public partial class ExpressionWheels : CanvasLayer
 {
+    private const string EmoteWheelAction = "emote_wheel";
+    private const string QuickChatWheelAction = "quick_chat_wheel";
+
     private RadialWheel _wheel = null!;
     private bool _disabled;
     private string? _openAction;
@@ -55,26 +64,37 @@ public partial class ExpressionWheels : CanvasLayer
     {
         if (_disabled) return;
 
-        if (@event.IsActionPressed("emote_wheel"))
+        if (@event.IsActionPressed(EmoteWheelAction))
         {
             // A wheel is already open for the other action: ignore rather than swap.
             if (_wheel.IsOpen) return;
             if (!SessionManager.Instance.MatchActive) return;
+            if (LocalInputContext.Instance.GameplaySuppressed) return;
             OpenEmoteWheel();
             GetViewport().SetInputAsHandled();
             return;
         }
 
-        if (@event.IsActionPressed("quick_chat_wheel"))
+        if (@event.IsActionPressed(QuickChatWheelAction))
         {
             if (_wheel.IsOpen) return;
             if (!SessionManager.Instance.MatchActive) return;
+            if (LocalInputContext.Instance.GameplaySuppressed) return;
             OpenQuickChatWheel();
             GetViewport().SetInputAsHandled();
             return;
         }
 
         if (!_wheel.IsOpen) return;
+
+        // A menu (pause, chat, dev console, a rebind, ...) suppressed gameplay while the
+        // wheel was held: close it without committing rather than let it fire on release
+        // or keep eating mouse motion behind whatever just opened.
+        if (LocalInputContext.Instance.GameplaySuppressed)
+        {
+            Close();
+            return;
+        }
 
         if (@event is InputEventMouseMotion motion)
         {
@@ -84,9 +104,9 @@ public partial class ExpressionWheels : CanvasLayer
         }
 
         // A release of the action that did not open the wheel must not commit anything.
-        if (@event.IsActionReleased("emote_wheel"))
+        if (@event.IsActionReleased(EmoteWheelAction))
         {
-            if (_openAction != "emote_wheel") return;
+            if (_openAction != EmoteWheelAction) return;
             var id = _wheel.Commit();
             Close();
             GetViewport().SetInputAsHandled();
@@ -94,13 +114,13 @@ public partial class ExpressionWheels : CanvasLayer
             return;
         }
 
-        if (@event.IsActionReleased("quick_chat_wheel"))
+        if (@event.IsActionReleased(QuickChatWheelAction))
         {
-            if (_openAction != "quick_chat_wheel") return;
+            if (_openAction != QuickChatWheelAction) return;
             var id = _wheel.Commit();
             Close();
             GetViewport().SetInputAsHandled();
-            if (id != 0) TextChatManager.Instance.SubmitQuickChat(id);
+            if (id != QuickChatLines.None) TextChatManager.Instance.SubmitQuickChat(id);
         }
     }
 
@@ -108,7 +128,7 @@ public partial class ExpressionWheels : CanvasLayer
     {
         var entries = new List<(string Label, int Id)>(EmoteCatalogue.All.Count);
         foreach (var entry in EmoteCatalogue.All) entries.Add((entry.DisplayName, entry.Id));
-        _openAction = "emote_wheel";
+        _openAction = EmoteWheelAction;
         _wheel.Open(entries);
     }
 
@@ -116,7 +136,7 @@ public partial class ExpressionWheels : CanvasLayer
     {
         var entries = new List<(string Label, int Id)>(QuickChatLines.All.Count);
         foreach (var entry in QuickChatLines.All) entries.Add((entry.Text, entry.Id));
-        _openAction = "quick_chat_wheel";
+        _openAction = QuickChatWheelAction;
         _wheel.Open(entries);
     }
 

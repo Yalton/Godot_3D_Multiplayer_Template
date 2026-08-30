@@ -46,6 +46,7 @@ public partial class TextChatManager : CanvasLayer
     {
         Instance = this;
         Multiplayer.PeerDisconnected += _rateLimiter.Forget;
+        Multiplayer.PeerDisconnected += _rejectLog.Forget;
         if (DisplayServer.GetName() == "headless")
         {
             ProcessMode = ProcessModeEnum.Disabled;
