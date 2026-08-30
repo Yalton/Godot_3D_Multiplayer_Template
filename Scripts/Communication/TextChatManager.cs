@@ -36,6 +36,7 @@ public partial class TextChatManager : CanvasLayer
     public bool ClientUiEnabled => ProcessMode != ProcessModeEnum.Disabled;
     public event Action<long, string, string>? MessageReceived;
 
+    private const int MaxLogParagraphs = 200;
     private RichTextLabel _log = null!;
     private LineEdit _input = null!;
     private readonly RpcRateLimiter _rateLimiter = new();
@@ -43,6 +44,7 @@ public partial class TextChatManager : CanvasLayer
     public override void _Ready()
     {
         Instance = this;
+        Multiplayer.PeerDisconnected += _rateLimiter.Forget;
         if (DisplayServer.GetName() == "headless")
         {
             ProcessMode = ProcessModeEnum.Disabled;
@@ -90,8 +92,11 @@ public partial class TextChatManager : CanvasLayer
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         box.AddChild(_log);
-        _input = new LineEdit { PlaceholderText = "Message…", MaxLength = 256, Visible = false };
+        _input = new LineEdit { PlaceholderText = "Message…", MaxLength = ChatPolicy.MaxLength, Visible = false };
         _input.TextSubmitted += _ => SendCurrent();
+        // Escape (ui_cancel) drops the LineEdit's focus without going through SendCurrent;
+        // without this, the input stays visible and the gameplay blocker stays set.
+        _input.FocusExited += CloseInput;
         box.AddChild(_input);
     }
 
@@ -167,6 +172,7 @@ public partial class TextChatManager : CanvasLayer
         if (!ClientUiEnabled) return;
         _log.AppendText($"[color=#8fd3ff]{ChatPolicy.EscapeBbCode(name)}[/color]: " +
                         $"{ChatPolicy.EscapeBbCode(text)}\n");
+        while (_log.GetParagraphCount() > MaxLogParagraphs) _log.RemoveParagraph(0);
         _log.ScrollToLine(Mathf.Max(0, _log.GetLineCount() - 1));
     }
 

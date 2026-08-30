@@ -6,6 +6,15 @@ namespace MultiplayerTemplate.Game;
 
 public partial class GameWorld : Node3D
 {
+    /// <summary>
+    /// Optional replacement for the whole player node (not just the character body).
+    /// The scene root must be a NetworkPlayer. If a PlayerCamera or PlayerNameplate is
+    /// not found among its descendants, one is constructed at the same local offsets as
+    /// the built-in rig. If no AvatarRig descendant is found, the configured (or
+    /// built-in) avatar is attached automatically. Leave unset to use the built-in rig.
+    /// </summary>
+    [Export] public PackedScene? PlayerScene { get; set; }
+
     private readonly System.Collections.Generic.Dictionary<long, NetworkPlayer> _players = new();
 
     public override void _Ready()
@@ -32,8 +41,16 @@ public partial class GameWorld : Node3D
         Visible = true;
         if (!Multiplayer.IsServer()) return;
         foreach (var peerId in SessionManager.Instance.Players.Keys)
+        {
+            if (SkipSpawn(peerId)) continue;
             Rpc(nameof(SpawnPlayer), peerId, SpawnPosition(peerId));
+        }
     }
+
+    // A headless dedicated host stays in the roster but has no one at the keyboard;
+    // spawning it would leave a motionless capsule in every match.
+    private static bool SkipSpawn(long peerId) =>
+        peerId == 1 && SessionManager.Instance.IsDedicatedServer;
 
     private void ClearPlayers()
     {
@@ -53,7 +70,7 @@ public partial class GameWorld : Node3D
         if (!Multiplayer.IsServer()) return;
         foreach (var existingPeerId in SessionManager.Instance.Players.Keys)
         {
-            if (existingPeerId != joiningPeerId)
+            if (existingPeerId != joiningPeerId && !SkipSpawn(existingPeerId))
                 RpcId(joiningPeerId, nameof(SpawnPlayer), existingPeerId, SpawnPosition(existingPeerId));
         }
         Rpc(nameof(SpawnPlayer), joiningPeerId, SpawnPosition(joiningPeerId));
@@ -83,9 +100,40 @@ public partial class GameWorld : Node3D
         return new Vector3(Mathf.Cos(angle) * 4f, 1f, Mathf.Sin(angle) * 4f);
     }
 
-    private static NetworkPlayer MakePlayer(long peerId)
+    private NetworkPlayer MakePlayer(long peerId)
     {
-        var player = new NetworkPlayer();
+        if (PlayerScene != null)
+        {
+            var instance = PlayerScene.Instantiate();
+            if (instance is NetworkPlayer custom)
+            {
+                var customView = FindDescendant<PlayerCamera>(custom);
+                if (customView == null)
+                {
+                    customView = new PlayerCamera { Position = new Vector3(0, 1.55f, 0) };
+                    custom.AddChild(customView);
+                }
+                var customNameLabel = FindDescendant<PlayerNameplate>(custom);
+                if (customNameLabel == null)
+                {
+                    customNameLabel = new PlayerNameplate { Position = new Vector3(0, 2.25f, 0) };
+                    custom.AddChild(customNameLabel);
+                }
+                custom.AttachAvatar(FindDescendant<AvatarRig>(custom) ?? AvatarFactory.Build(peerId));
+                custom.Setup(peerId, customView, customNameLabel);
+                return custom;
+            }
+            GD.PushError("PlayerScene needs a NetworkPlayer root; falling back to the built-in rig.");
+            instance.QueueFree();
+        }
+        var player = new NetworkPlayer
+        {
+            // Match the named layers in project.godot: live on "Players" (2), collide
+            // with "World" (1), other players (2), and "Interactables" (4). The default
+            // layer/mask of 1 walks straight through every crate and switch.
+            CollisionLayer = 0b010,
+            CollisionMask = 0b111
+        };
         var collision = new CollisionShape3D
         {
             Shape = new CapsuleShape3D { Radius = 0.45f, Height = 1.8f },
@@ -99,5 +147,18 @@ public partial class GameWorld : Node3D
         player.AddChild(nameLabel);
         player.Setup(peerId, view, nameLabel);
         return player;
+    }
+
+    // Recursive lookup used to adapt a custom PlayerScene: it may already provide its
+    // own PlayerCamera / PlayerNameplate / AvatarRig somewhere under the root, in which
+    // case we must reuse it rather than build a duplicate.
+    private static T? FindDescendant<T>(Node root) where T : class
+    {
+        foreach (var child in root.GetChildren())
+        {
+            if (child is T match) return match;
+            if (FindDescendant<T>(child) is { } found) return found;
+        }
+        return null;
     }
 }

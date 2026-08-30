@@ -11,7 +11,23 @@ public partial class InteractionManager : Node
     public const float Reach = 4.5f;
     private readonly RpcRateLimiter _rateLimiter = new();
 
-    public override void _Ready() => Instance = this;
+    public override void _Ready()
+    {
+        Instance = this;
+        Multiplayer.PeerDisconnected += OnPeerDisconnected;
+    }
+
+    public override void _ExitTree() => Multiplayer.PeerDisconnected -= OnPeerDisconnected;
+
+    // Objects held by a departing peer would otherwise keep HeldByPeer set to the dead
+    // id forever: gravity stays off and ServerInteract refuses every other grabber.
+    private void OnPeerDisconnected(long peerId)
+    {
+        _rateLimiter.Forget(peerId);
+        if (!Multiplayer.IsServer()) return;
+        foreach (var node in GetTree().GetNodesInGroup("network_physics"))
+            if (node is NetworkPhysicsObject prop && prop.HeldByPeer == peerId) prop.ServerDrop();
+    }
 
     public void Request(NodePath target)
     {

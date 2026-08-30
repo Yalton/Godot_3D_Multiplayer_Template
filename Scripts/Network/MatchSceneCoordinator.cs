@@ -1,6 +1,7 @@
 using Godot;
 using DebugLoggerKit;
 using MultiplayerTemplate.Game;
+using MultiplayerTemplate.Interaction;
 
 namespace MultiplayerTemplate.Network;
 
@@ -10,10 +11,14 @@ public partial class MatchSceneCoordinator : Node
 
     private const string LogModule = "SceneSync";
     public const string DefaultMatchScene = "res://scenes/gameplay/example_arena.tscn";
+    private const double LoadTimeoutSeconds = 30;
 
     private readonly HashSet<long> _waitingFor = new();
     private string _activeScenePath = "";
     private int _loadGeneration;
+    // Local monotonic counter that invalidates suspended load coroutines. Distinct from
+    // _loadGeneration, which is server-driven and resets when joining a new session.
+    private int _loadEpoch;
     private Node? _activeScene;
     private Node? _matchContainer;
 
@@ -24,9 +29,26 @@ public partial class MatchSceneCoordinator : Node
         Instance = this;
         DebugLogger.Instance.RegisterModule(LogModule, true);
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
+        SessionManager.Instance.StateChanged += OnSessionStateChanged;
     }
 
-    public override void _ExitTree() => Multiplayer.PeerDisconnected -= OnPeerDisconnected;
+    public override void _ExitTree()
+    {
+        Multiplayer.PeerDisconnected -= OnPeerDisconnected;
+        SessionManager.Instance.StateChanged -= OnSessionStateChanged;
+    }
+
+    // Leaving a session must tear down the mounted match scene: nothing else does, and
+    // bumping the epoch also cancels any load coroutine still in flight.
+    private void OnSessionStateChanged(SessionManager.SessionState previous, SessionManager.SessionState current)
+    {
+        if (current != SessionManager.SessionState.Offline) return;
+        _loadEpoch++;
+        _loadGeneration = 0;
+        _activeScenePath = "";
+        _waitingFor.Clear();
+        UnloadLocalScene();
+    }
 
     public void SetMatchContainer(Node matchContainer) => _matchContainer = matchContainer;
 
@@ -42,6 +64,24 @@ public partial class MatchSceneCoordinator : Node
         DebugLogger.Instance.Info(LogModule,
             $"Loading {_activeScenePath}; waiting for {_waitingFor.Count} peers");
         Rpc(nameof(PrepareMatchScene), _activeScenePath, _loadGeneration);
+        _ = KickStalledLoaders(_loadGeneration);
+    }
+
+    // A client that stalls or errors while loading would otherwise block match start for
+    // everyone, forever — it has no failure-report path. The host itself is exempt: it
+    // cannot kick itself, and its own load failure is visible locally.
+    private async Task KickStalledLoaders(int generation)
+    {
+        await ToSignal(GetTree().CreateTimer(LoadTimeoutSeconds), SceneTreeTimer.SignalName.Timeout);
+        if (!Multiplayer.IsServer() || generation != _loadGeneration ||
+            SessionManager.Instance.State != SessionManager.SessionState.Loading) return;
+        foreach (var peerId in _waitingFor.ToArray())
+        {
+            if (peerId == 1) continue;
+            DebugLogger.Instance.Warning(LogModule,
+                $"Peer {peerId} did not load within {LoadTimeoutSeconds}s; disconnecting");
+            Multiplayer.MultiplayerPeer?.DisconnectPeer((int)peerId);
+        }
     }
 
     public void HandleLateJoin(long peerId)
@@ -56,10 +96,8 @@ public partial class MatchSceneCoordinator : Node
     public void ReturnToLobby()
     {
         if (!Multiplayer.IsServer()) return;
-        _activeScenePath = "";
         _waitingFor.Clear();
         Rpc(nameof(UnloadMatchScene));
-        SessionManager.Instance.ReturnToLobbyLocally();
         SessionManager.Instance.SetStateServer(SessionManager.SessionState.Lobby);
     }
 
@@ -70,6 +108,7 @@ public partial class MatchSceneCoordinator : Node
         if (generation < _loadGeneration) return;
         _loadGeneration = generation;
         _activeScenePath = scenePath;
+        var epoch = ++_loadEpoch;
         SessionManager.Instance.ApplyLoadingStateLocally();
         UnloadLocalScene();
 
@@ -84,6 +123,11 @@ public partial class MatchSceneCoordinator : Node
         while (ResourceLoader.LoadThreadedGetStatus(scenePath, progress) ==
                ResourceLoader.ThreadLoadStatus.InProgress)
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+        // The session may have moved on while this coroutine was suspended (return to
+        // lobby, disconnect, or a newer load). Mounting the stale scene would leave it
+        // on top of whatever state the session is in now.
+        if (epoch != _loadEpoch) return;
 
         if (ResourceLoader.LoadThreadedGetStatus(scenePath) != ResourceLoader.ThreadLoadStatus.Loaded)
         {
@@ -131,7 +175,18 @@ public partial class MatchSceneCoordinator : Node
             RpcId(peerId, nameof(ActivateMatch), generation);
             var world = GetTree().GetFirstNodeInGroup("game_world") as GameWorld;
             world?.SpawnForLateJoin(peerId);
+            SyncWorldStateTo(peerId);
         }
+    }
+
+    // Interactable and physics state propagates through one-shot RPCs, so a late joiner
+    // starts from scene defaults and must be brought up to date explicitly.
+    private void SyncWorldStateTo(long peerId)
+    {
+        foreach (var node in GetTree().GetNodesInGroup("interactable"))
+            if (node is NetworkInteractable interactable) interactable.SyncStateTo(peerId);
+        foreach (var node in GetTree().GetNodesInGroup("network_physics"))
+            if (node is NetworkPhysicsObject physics) physics.SyncStateTo(peerId);
     }
 
     private void OnPeerDisconnected(long peerId)
@@ -157,7 +212,15 @@ public partial class MatchSceneCoordinator : Node
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true,
         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void UnloadMatchScene() => UnloadLocalScene();
+    private void UnloadMatchScene()
+    {
+        // Bumping the epoch cancels any load coroutine still in flight so it cannot
+        // mount its scene after we have returned to the lobby.
+        _loadEpoch++;
+        _activeScenePath = "";
+        UnloadLocalScene();
+        SessionManager.Instance.ReturnToLobbyLocally();
+    }
 
     private void UnloadLocalScene()
     {

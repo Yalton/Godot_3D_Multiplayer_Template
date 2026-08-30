@@ -65,6 +65,15 @@ public partial class NetworkPhysicsObject : RigidBody3D
 
     public void ServerDrop() => SetHeld(0);
 
+    /// <summary>Server-side: brings a late joiner up to date with the current state.</summary>
+    public void SyncStateTo(long peerId)
+    {
+        if (!Multiplayer.IsServer()) return;
+        RpcId(peerId, nameof(ReceiveHeld), HeldByPeer);
+        RpcId(peerId, nameof(ReceiveSnapshot), GlobalPosition,
+            GlobalBasis.GetRotationQuaternion(), LinearVelocity);
+    }
+
     private void SetHeld(long peerId)
     {
         HeldByPeer = peerId;

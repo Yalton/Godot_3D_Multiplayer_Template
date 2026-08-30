@@ -69,6 +69,7 @@ public partial class DevConsoleUI : Control
 		{
 			// Connect to the OutputRequested signal
 			_devConsoleManager.OutputRequested += OnOutputRequested;
+			_devConsoleManager.SetConsoleUI(this);
 			Log.Debug(MODULE_NAME, "Connected to DevConsoleManager");
 		}
 		else
@@ -98,7 +99,7 @@ public partial class DevConsoleUI : Control
 
 	public override void _Input(InputEvent @event)
 	{
-		if (enable_terminal && DevConsoleManager.Instance.EnableConsoleAccess)
+		if (enable_terminal && _devConsoleManager is { EnableConsoleAccess: true })
 		{
 			// Toggle console with the configured action
 			if (@event.IsActionPressed("toggle_dev_console"))
@@ -108,10 +109,12 @@ public partial class DevConsoleUI : Control
 			}
 		}
 
-		// Handle mouse wheel scrolling when console is visible
+		// Handle mouse wheel scrolling when console is visible — but only while the
+		// cursor is over the console output, so other UI keeps its own scrolling.
 		if (Visible && @event is InputEventMouseButton mouseEvent)
 		{
-			if (mouseEvent.ButtonIndex == MouseButton.WheelUp || mouseEvent.ButtonIndex == MouseButton.WheelDown)
+			if ((mouseEvent.ButtonIndex == MouseButton.WheelUp || mouseEvent.ButtonIndex == MouseButton.WheelDown) &&
+				scroll_container != null && scroll_container.GetGlobalRect().HasPoint(mouseEvent.GlobalPosition))
 			{
 				HandleMouseScroll(mouseEvent);
 				GetViewport().SetInputAsHandled();
@@ -215,18 +218,22 @@ public partial class DevConsoleUI : Control
 			return;
 		}
 
-		// Add command to history
+		// Add command to history (bounded like the output history)
 		command_history.Add(text);
+		if (command_history.Count > max_lines)
+		{
+			command_history.RemoveAt(0);
+		}
 		history_index = command_history.Count;
 
-		// Display the command in console
-		AddLine("> " + text);
+		// Display the command in console (escaped: typed input is not BBCode)
+		AddLine("> " + EscapeBbCode(text));
 
 		// Process the command using proper C# method calls
 		if (_devConsoleManager != null)
 		{
 			// Set this console UI as active
-			_devConsoleManager.SetConsoleUI(this, true);
+			_devConsoleManager.SetConsoleUI(this);
 
 			// Process the command
 			_devConsoleManager.ProcessCommand(text);
@@ -392,5 +399,17 @@ public partial class DevConsoleUI : Control
 	public bool IsConsoleOpen()
 	{
 		return Visible;
+	}
+
+	private static string EscapeBbCode(string value)
+	{
+		var escaped = new System.Text.StringBuilder(value.Length);
+		foreach (var character in value)
+		{
+			if (character == '[') escaped.Append("[lb]");
+			else if (character == ']') escaped.Append("[rb]");
+			else escaped.Append(character);
+		}
+		return escaped.ToString();
 	}
 }

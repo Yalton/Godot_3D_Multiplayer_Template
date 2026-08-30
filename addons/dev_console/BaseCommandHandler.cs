@@ -32,18 +32,22 @@ public abstract partial class BaseCommandHandler : Node
 
 	protected string _moduleName = null!;
 	protected DevConsoleManager _consoleManager = null!;
+	private readonly System.Collections.Generic.List<string> _registeredCommands = new();
 
 	public override void _Ready()
 	{
 		_moduleName = _handlerName;
 
-
 		Log.RegisterModule(_moduleName, _enableDebug);
 
-
-		// Get console manager reference
-		_consoleManager = GetParent<DevConsoleManager>(); ;
-
+		// Handlers may live anywhere in the tree; being parented under the manager is
+		// merely a convenient default, not a requirement.
+		_consoleManager = GetParentOrNull<DevConsoleManager>() ?? DevConsoleManager.Instance;
+		if (_consoleManager == null)
+		{
+			Log.Error(_moduleName, "DevConsoleManager not found; commands will not be registered");
+			return;
+		}
 
 		// Register our commands with the main console manager
 		RegisterCommands();
@@ -53,7 +57,8 @@ public abstract partial class BaseCommandHandler : Node
 
 	public override void _ExitTree()
 	{
-		// Optionally unregister commands when handler is removed
+		// Unregister so the manager (an autoload that outlives scene-local handlers)
+		// holds no delegates targeting this freed node.
 		UnregisterCommands();
 		Log.Debug(_moduleName, "Command handler cleaned up");
 	}
@@ -67,11 +72,17 @@ public abstract partial class BaseCommandHandler : Node
 	}
 
 	/// <summary>
-	/// Override this to unregister commands when handler is removed
+	/// Removes every command this handler registered. Override only when a handler
+	/// needs additional cleanup beyond its own registrations.
 	/// </summary>
 	protected virtual void UnregisterCommands()
 	{
-		// Child classes can override to clean up their commands
+		if (_consoleManager == null || !IsInstanceValid(_consoleManager)) return;
+		foreach (var name in _registeredCommands)
+		{
+			_consoleManager.UnregisterCommand(name);
+		}
+		_registeredCommands.Clear();
 	}
 
 	/// <summary>
@@ -82,6 +93,7 @@ public abstract partial class BaseCommandHandler : Node
 		if (_consoleManager != null)
 		{
 			_consoleManager.RegisterCommand(name, method, description, adminOnly, _commandCategory);
+			_registeredCommands.Add(name);
 			Log.Debug(_moduleName, $"Registered command: {name}");
 		}
 		else

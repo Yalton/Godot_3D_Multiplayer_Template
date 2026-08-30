@@ -11,6 +11,7 @@ public partial class DebugLogger : Node
 	private static DebugLogger _instance = null!;
 	public static DebugLogger Instance => _instance;
 	private const string MODULE_CONFIG_PATH = "user://debug_modules/";
+	private const string GLOBAL_DEBUG_CONFIG_PATH = MODULE_CONFIG_PATH + "global_debug.cfg";
 
 	private Dictionary<string, bool> registeredModules = new Dictionary<string, bool>();
 	private Dictionary<string, ModuleDebugConfig> moduleConfigs = new Dictionary<string, ModuleDebugConfig>();
@@ -37,11 +38,14 @@ public partial class DebugLogger : Node
 
 		if (!DisableFileWriting)
 		{
-			using var dir = DirAccess.Open("user://");
-			if (!dir.DirExists(MODULE_CONFIG_PATH))
-			{
-				dir.MakeDir(MODULE_CONFIG_PATH);
-			}
+			EnsureConfigDirectory();
+		}
+
+		// Apply the dock-persisted global debug flag (dev builds force-enable above;
+		// if the file is absent the scene/inspector value stands).
+		if (!DisableFileWriting && !OS.HasFeature("dev"))
+		{
+			ApplyGlobalDebugSettingFromDisk();
 		}
 
 		// Sync DebugDraw3D with our global debug state
@@ -52,7 +56,9 @@ public partial class DebugLogger : Node
 		// Poll .tres configs so toggles made in the editor plugin panel propagate to the running game.
 		// Skipped in dev builds — RegisterModule already force-enables everything; reloading from disk
 		// would just re-disable modules based on whatever was last persisted in a non-dev run.
-		if (!DisableFileWriting && !OS.HasFeature("dev"))
+		// Editor-launched games only: the dock the polling exists for cannot reach an export,
+		// so shipped builds would pay per-second disk I/O for nothing.
+		if (!DisableFileWriting && !OS.HasFeature("dev") && OS.HasFeature("editor"))
 		{
 			var reloadTimer = new Godot.Timer
 			{
@@ -72,10 +78,21 @@ public partial class DebugLogger : Node
 
 	private void ReloadModuleConfigsFromDisk()
 	{
+		// Global flag first — the editor dock persists it to the same directory.
+		if (ApplyGlobalDebugSettingFromDisk())
+		{
+			GD.Print($"[DebugLogger] Hot-reloaded global debug: {(DebugEnabled ? "enabled" : "disabled")}");
+		}
+
 		foreach (var moduleName in registeredModules.Keys.ToList())
 		{
 			string configPath = MODULE_CONFIG_PATH + moduleName + ".tres";
 			if (!Godot.FileAccess.FileExists(configPath))
+				continue;
+
+			// Same torn-file guard as LoadModuleConfig: a concurrent instance may be
+			// mid-write, and loading a truncated .tres spams unsuppressable native errors.
+			if (!HasValidResourceHeader(configPath))
 				continue;
 
 			var resource = ResourceLoader.Load(configPath, "", ResourceLoader.CacheMode.Ignore);
@@ -89,6 +106,26 @@ public partial class DebugLogger : Node
 				}
 			}
 		}
+	}
+
+	// Reads the global debug flag persisted by the editor dock (global_debug.cfg) and
+	// applies it to DebugEnabled. An absent or unreadable file leaves DebugEnabled as-is.
+	// Returns true when the value actually changed.
+	private bool ApplyGlobalDebugSettingFromDisk()
+	{
+		var config = new ConfigFile();
+		if (config.Load(GLOBAL_DEBUG_CONFIG_PATH) != Godot.Error.Ok)
+			return false;
+
+		bool enabled = (bool)config.GetValue("debug", "enabled", DebugEnabled);
+		if (enabled == DebugEnabled)
+			return false;
+
+		DebugEnabled = enabled;
+#if DEBUGDRAW3D
+		DebugDraw3D.DebugEnabled = DebugEnabled;
+#endif
+		return true;
 	}
 
 	public void RegisterModule(string moduleName, bool defaultEnabled = true)
@@ -382,7 +419,22 @@ public partial class DebugLogger : Node
 	public void SetFileWritingEnabled(bool enabled)
 	{
 		DisableFileWriting = !enabled;
+		// The config directory is normally created in _Ready; if the game started with
+		// file writing disabled, it does not exist yet and every save would fail.
+		if (enabled)
+		{
+			EnsureConfigDirectory();
+		}
 		GD.Print($"File writing {(DisableFileWriting ? "disabled" : "enabled")}");
+	}
+
+	private static void EnsureConfigDirectory()
+	{
+		using var dir = DirAccess.Open("user://");
+		if (dir != null && !dir.DirExists(MODULE_CONFIG_PATH))
+		{
+			dir.MakeDir(MODULE_CONFIG_PATH);
+		}
 	}
 
 	// Property for external access to registered modules (read-only)

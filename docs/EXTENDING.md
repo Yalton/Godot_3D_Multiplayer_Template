@@ -79,6 +79,19 @@ public partial class MyRig : AvatarRig
 }
 ```
 
+## Replace the whole player
+
+To swap the entire player node without touching code, set `GameWorld.PlayerScene` (exported
+in the inspector on the match scene's root) to your own `PackedScene`. Its root must be a
+`NetworkPlayer` (or subclass); movement tuning (`Speed`, `JumpVelocity`) is exported there.
+`GameWorld` looks for a `PlayerCamera` and a `PlayerNameplate` among the root's descendants
+and constructs whichever one is missing, at the same local offsets the built-in player uses
+(camera pivot at y=1.55, nameplate at y=2.25). If no `AvatarRig` descendant is found, the
+configured (or built-in) avatar is attached automatically, same as the built-in player.
+
+`PlayerScene` replaces the entire player; `template/avatar/scene_path` replaces only the
+character body.
+
 ## Load a match scene
 
 Put the gameplay root in its own `PackedScene`, with deterministic node paths on every peer:

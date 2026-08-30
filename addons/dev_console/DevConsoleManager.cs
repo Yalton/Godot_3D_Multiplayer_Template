@@ -65,10 +65,13 @@ public partial class DevConsoleManager : Node
 
 		// Enable console only when running from the Godot editor or when the
 		// export preset explicitly opts in via the "enable_console_dev" feature tag.
-		// Public / production exports default to disabled.
+		// Public / production exports default to disabled. Dev contexts also start
+		// with admin so AdminOnly commands work while iterating; exports must grant
+		// it explicitly through SetAdminStatus.
 		if (OS.HasFeature("editor") || OS.HasFeature("enable_console_dev"))
 		{
 			EnableConsoleAccess = true;
+			_isAdmin = true;
 		}
 
 		Log.RegisterModule(MODULE_NAME, true);
@@ -87,13 +90,13 @@ public partial class DevConsoleManager : Node
 	}
 
 	/// <summary>
-	/// Set the console UI reference and admin mode
+	/// Set the console UI reference. Admin status is controlled exclusively through
+	/// SetAdminStatus — the UI must never be able to grant itself permissions.
 	/// </summary>
-	public void SetConsoleUI(Control consoleUI, bool adminMode = false)
+	public void SetConsoleUI(Control consoleUI)
 	{
 		_devConsoleUI = consoleUI;
-		_isAdmin = adminMode;
-		Log.Debug(MODULE_NAME, $"Console UI reference set. Admin mode: {adminMode}");
+		Log.Debug(MODULE_NAME, "Console UI reference set");
 	}
 
 	/// <summary>
@@ -447,10 +450,11 @@ public partial class DevConsoleManager : Node
 	}
 
 	/// <summary>
-	/// Get the console UI reference
+	/// Get the console UI reference, or null when no valid UI is registered
+	/// (e.g. its scene was unloaded without a replacement).
 	/// </summary>
-	public Control GetConsoleUI()
+	public Control? GetConsoleUI()
 	{
-		return _devConsoleUI;
+		return _devConsoleUI != null && IsInstanceValid(_devConsoleUI) ? _devConsoleUI : null;
 	}
 }

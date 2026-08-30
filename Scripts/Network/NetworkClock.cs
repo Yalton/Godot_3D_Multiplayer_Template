@@ -63,7 +63,30 @@ public partial class NetworkClock : Node
 
     private sealed record ScheduledAction(long AtUsec, Action Callback);
 
-    public override void _Ready() => Instance = this;
+    public override void _Ready()
+    {
+        Instance = this;
+        SessionManager.Instance.StateChanged += OnSessionStateChanged;
+    }
+
+    private void OnSessionStateChanged(SessionManager.SessionState previous, SessionManager.SessionState current)
+    {
+        if (current == SessionManager.SessionState.Offline) ResetSync();
+    }
+
+    // Without this, a reconnect would report IsSynchronized immediately from stale
+    // samples and converge slowly from the previous host's offset, and timers or
+    // scheduled actions from the old session could fire into the new one.
+    private void ResetSync()
+    {
+        _pending.Clear();
+        _timers.Clear();
+        _scheduled.Clear();
+        _probeAccumulator = 0;
+        _smoothedOffsetUsec = 0;
+        _receivedSamples = 0;
+        LastRttMs = 0;
+    }
 
     public override void _Process(double delta)
     {
@@ -114,6 +137,10 @@ public partial class NetworkClock : Node
     {
         var sequence = ++_sequence;
         var sent = LocalUsec;
+        // Probes travel unreliably; drop entries whose replies never arrived so the
+        // map cannot grow without bound on a lossy link.
+        foreach (var (staleSequence, sentUsec) in _pending.ToArray())
+            if (sent - sentUsec > 3_000_000) _pending.Remove(staleSequence);
         _pending[sequence] = sent;
         ProbeSent?.Invoke(sequence, sent);
         RpcId(1, nameof(RequestClockSample), sequence, sent);

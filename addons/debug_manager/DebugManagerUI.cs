@@ -2,11 +2,16 @@
 using Godot;
 using System.Collections.Generic;
 using System.Linq;
-using DebugLoggerKit;
 
 [Tool]
 public partial class DebugManagerUI : Control
 {
+	// The dock runs in the EDITOR process; the game runs in a SEPARATE process, so the
+	// only channel to a running game is files under user://debug_modules/ (the game's
+	// DebugLogger polls them once per second when launched from the editor).
+	private const string CONFIG_DIR_PATH = "user://debug_modules/";
+	private const string GLOBAL_DEBUG_CONFIG_PATH = CONFIG_DIR_PATH + "global_debug.cfg";
+
 	private VBoxContainer moduleList = null!;
 	private CheckButton globalToggle = null!;
 	private Button enableAllButton = null!;
@@ -59,24 +64,21 @@ public partial class DebugManagerUI : Control
 
 		modulesData.Clear();
 
-		// Get global debug setting
-		bool globalEnabled = true;
-		if (Engine.HasSingleton("DebugLogger"))
-		{
-			var debugLogger = DebugLogger.Instance;
-			if (debugLogger != null)
-			{
-				globalEnabled = debugLogger.DebugEnabled;
-			}
-		}
+		// Get persisted global debug setting (written by OnGlobalToggle, read by the
+		// running game's DebugLogger). SetPressedNoSignal avoids re-saving on load.
+		bool globalEnabled = LoadGlobalDebugSetting(fallback: true);
+		globalToggle.SetPressedNoSignal(globalEnabled);
 
-		globalToggle.ButtonPressed = globalEnabled;
-
-		string configPath = "user://debug_modules/";
+		string configPath = CONFIG_DIR_PATH;
 		int modulesLoaded = 0;
 
 		using (var dir = DirAccess.Open("user://"))
 		{
+			if (dir == null)
+			{
+				statusLabel.Text = "Error: could not open user:// directory";
+				return;
+			}
 			if (!dir.DirExists(configPath))
 			{
 				dir.MakeDir(configPath);
@@ -94,10 +96,11 @@ public partial class DebugManagerUI : Control
 				dir.ListDirBegin();
 				string fileName = dir.GetNext();
 
-				// First pass: collect all module names
+				// First pass: collect all module names. Skip SaveConfigAtomic temps
+				// (Module.<pid>.tmp.tres) — an orphaned temp is not a real module.
 				while (!string.IsNullOrEmpty(fileName))
 				{
-					if (!dir.CurrentIsDir() && fileName.EndsWith(".tres"))
+					if (!dir.CurrentIsDir() && fileName.EndsWith(".tres") && !fileName.EndsWith(".tmp.tres"))
 					{
 						string moduleName = fileName.GetBaseName();
 						string configFile = configPath + fileName;
@@ -113,43 +116,15 @@ public partial class DebugManagerUI : Control
 							else
 							{
 								// File exists but wrong type - skip it
-								DebugLogger.Instance?.Error("DebugManagerUI", $"Skipping corrupted config file: {fileName}");
+								GD.PrintErr($"[DebugManagerUI] Skipping corrupted config file: {fileName}");
 							}
 						}
 						catch (System.Exception e)
 						{
-							DebugLogger.Instance?.Error("DebugManagerUI", $"Error loading {fileName}: {e.Message}");
+							GD.PrintErr($"[DebugManagerUI] Error loading {fileName}: {e.Message}");
 						}
 					}
 					fileName = dir.GetNext();
-				}
-
-				// Also get active modules from DebugLogger
-				if (Engine.HasSingleton("DebugLogger"))
-				{
-					var debugLogger = DebugLogger.Instance;
-					if (debugLogger != null)
-					{
-						foreach (var kvp in debugLogger.RegisteredModules)
-						{
-							if (!modulesData.ContainsKey(kvp.Key))
-							{
-								var config = new ModuleDebugConfig(kvp.Key, kvp.Value);
-
-								if (!debugLogger.DisableFileWriting)
-								{
-									string savePath = configPath + kvp.Key + ".tres";
-									ResourceSaver.Save(config, savePath);
-								}
-
-								modulesData[kvp.Key] = config;
-								if (!moduleNames.Contains(kvp.Key))
-								{
-									moduleNames.Add(kvp.Key);
-								}
-							}
-						}
-					}
 				}
 
 				// Sort module names
@@ -176,8 +151,19 @@ public partial class DebugManagerUI : Control
 			}
 		}
 
-		statusLabel.Text = $"Loaded {modulesLoaded} modules";
+		statusLabel.Text = $"Loaded {modulesLoaded} modules — global debug {(globalEnabled ? "enabled" : "disabled")}";
 		ApplySearchFilter();
+	}
+
+	// Reads the persisted global debug flag; returns fallback when the file is absent
+	// or unreadable (a fresh project has no global_debug.cfg yet).
+	private static bool LoadGlobalDebugSetting(bool fallback)
+	{
+		var config = new ConfigFile();
+		if (config.Load(GLOBAL_DEBUG_CONFIG_PATH) != Godot.Error.Ok)
+			return fallback;
+
+		return (bool)config.GetValue("debug", "enabled", fallback);
 	}
 
 	private void OnSearchTextChanged(string newText)
@@ -208,15 +194,8 @@ public partial class DebugManagerUI : Control
 		modulesData[moduleName] = new ModuleDebugConfig(moduleName, enabled);
 		SaveModuleConfig(moduleName);
 
-		if (Engine.HasSingleton("DebugLogger"))
-		{
-			var debugLogger = DebugLogger.Instance;
-			if (debugLogger != null && debugLogger.RegisteredModules.ContainsKey(moduleName))
-			{
-				debugLogger.SetModuleEnabled(moduleName, enabled);
-				statusLabel.Text = $"Updated {moduleName}: {(enabled ? "Enabled" : "Disabled")}";
-			}
-		}
+		// A game launched from the editor picks the saved file up via its 1-second poll.
+		statusLabel.Text = $"Updated {moduleName}: {(enabled ? "Enabled" : "Disabled")}";
 	}
 
 	private void SaveModuleConfig(string moduleName)
@@ -224,15 +203,8 @@ public partial class DebugManagerUI : Control
 		if (!modulesData.ContainsKey(moduleName))
 			return;
 
-		if (Engine.HasSingleton("DebugLogger"))
-		{
-			var debugLogger = DebugLogger.Instance;
-			if (debugLogger != null && debugLogger.DisableFileWriting)
-				return;
-		}
-
 		var config = modulesData[moduleName];
-		string configPath = "user://debug_modules/" + moduleName + ".tres";
+		string configPath = CONFIG_DIR_PATH + moduleName + ".tres";
 		var err = ResourceSaver.Save(config, configPath);
 
 		if (err != Godot.Error.Ok)
@@ -243,15 +215,27 @@ public partial class DebugManagerUI : Control
 
 	private void OnGlobalToggle(bool enabled)
 	{
-		if (Engine.HasSingleton("DebugLogger"))
+		// Persist to user://debug_modules/global_debug.cfg — the game's DebugLogger reads
+		// it on startup and re-reads it in its 1-second editor poll.
+		using (var dir = DirAccess.Open("user://"))
 		{
-			var debugLogger = DebugLogger.Instance;
-			if (debugLogger != null)
+			if (dir != null && !dir.DirExists(CONFIG_DIR_PATH))
 			{
-				debugLogger.DebugEnabled = enabled;
-				statusLabel.Text = $"Global debug {(enabled ? "enabled" : "disabled")}";
+				dir.MakeDir(CONFIG_DIR_PATH);
 			}
 		}
+
+		var config = new ConfigFile();
+		config.SetValue("debug", "enabled", enabled);
+		var err = config.Save(GLOBAL_DEBUG_CONFIG_PATH);
+
+		if (err != Godot.Error.Ok)
+		{
+			statusLabel.Text = $"Error saving global debug setting: {err}";
+			return;
+		}
+
+		statusLabel.Text = $"Global debug {(enabled ? "enabled" : "disabled")}";
 	}
 
 	private void OnEnableAllPressed()
@@ -292,7 +276,7 @@ public partial class DebugManagerUI : Control
 
 	private void ConfirmDeleteAllConfigs()
 	{
-		string configPath = "user://debug_modules/";
+		string configPath = CONFIG_DIR_PATH;
 		int filesDeleted = 0;
 
 		using var dir = DirAccess.Open(configPath);

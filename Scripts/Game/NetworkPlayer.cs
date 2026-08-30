@@ -10,12 +10,13 @@ namespace MultiplayerTemplate.Game;
 
 public partial class NetworkPlayer : CharacterBody3D
 {
-    private const float Speed = 6f;
-    private const float JumpVelocity = 5.5f;
+    [Export] public float Speed { get; set; } = 6f;
+    [Export] public float JumpVelocity { get; set; } = 5.5f;
     private const float SnapshotRate = 20f;
     private const float ReconcileThreshold = 0.12f;
     private const float HardSnapThreshold = 2.5f;
     private const float YawIdleEpsilon = 0.01f;
+    private const float PitchLimit = 1.45f;
 
     public long PeerId { get; private set; } = 1;
     private float _yaw;
@@ -24,9 +25,11 @@ public partial class NetworkPlayer : CharacterBody3D
     private Vector3 _targetPosition;
     private Vector3 _targetVelocity;
     private float _targetYaw;
+    private float _targetPitch;
     private Vector2 _serverMoveInput;
     private bool _serverJump;
     private float _serverYaw;
+    private float _serverPitch;
     private uint _nextInputSequence;
     private uint _lastReceivedSequence;
     private AvatarRig? _avatar;
@@ -35,6 +38,8 @@ public partial class NetworkPlayer : CharacterBody3D
     private bool _targetGrounded = true;
     private PlayerCamera _view = null!;
     private PlayerNameplate _nameLabel = null!;
+    private uint _unackedJumpSequence;
+    private (Vector3 Position, Vector3 Velocity, float Yaw, float Error)? _pendingCorrection;
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
     private double _lastInputSeconds;
@@ -66,7 +71,7 @@ public partial class NetworkPlayer : CharacterBody3D
     {
         if (rig == null) return;
         _avatar = rig;
-        AddChild(rig);
+        if (rig.GetParent() == null) AddChild(rig);
     }
 
     public override void _Ready()
@@ -102,7 +107,7 @@ public partial class NetworkPlayer : CharacterBody3D
         if (@event is not InputEventMouseMotion motion) return;
         var sensitivity = SettingsManager.Instance.GetMouseSensitivity() / 15000f;
         _yaw -= motion.Relative.X * sensitivity;
-        _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * sensitivity, -1.45f, 1.45f);
+        _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * sensitivity, -PitchLimit, PitchLimit);
         _view.ApplyPitch(_pitch);
     }
 
@@ -119,29 +124,42 @@ public partial class NetworkPlayer : CharacterBody3D
                 _serverMoveInput = local.Move;
                 _serverJump = local.Jump;
                 _serverYaw = _yaw;
+                _serverPitch = _pitch;
                 _lastReceivedSequence = ++_nextInputSequence;
             }
             ApplyMovement(_serverMoveInput, _serverJump, _serverYaw, step);
+            // Server-side pitch: HoldPosition and remote aim read it from _view.
+            _view.ApplyPitch(_serverPitch);
             _serverJump = false;
             SendSnapshots(delta);
             UpdateAfk();
         }
         else if (IsLocalPlayer)
         {
+            ApplyPendingCorrection();
             var local = ReadLocalInput();
             var sequence = ++_nextInputSequence;
             _pendingInputs.Add(new PredictedInput(sequence, local.Move, local.Jump, _yaw, step));
             if (_pendingInputs.Count > 120) _pendingInputs.RemoveAt(0);
             ApplyMovement(local.Move, local.Jump, _yaw, step);
-            RpcId(1, nameof(SubmitInput), local.Move, local.Jump, _yaw, sequence);
+            // A jump is a one-frame edge on an unreliable channel: keep resending the
+            // flag until the server acknowledges a later input, so one lost packet
+            // cannot eat the jump and force a hard reconcile snap. Redundant trues are
+            // harmless server-side — the body is airborne after the first one lands.
+            if (local.Jump) _unackedJumpSequence = sequence;
+            RpcId(1, nameof(SubmitInput),
+                local.Move, local.Jump || _unackedJumpSequence != 0, _yaw, _pitch, sequence);
         }
         else
         {
-            GlobalPosition = GlobalPosition.Lerp(_targetPosition, Mathf.Min(step * 14f, 1f));
+            var weight = Mathf.Min(step * 14f, 1f);
+            GlobalPosition = GlobalPosition.Lerp(_targetPosition, weight);
             Rotation = new Vector3(
                 Rotation.X,
-                Mathf.LerpAngle(Rotation.Y, _targetYaw, Mathf.Min(step * 14f, 1f)),
+                Mathf.LerpAngle(Rotation.Y, _targetYaw, weight),
                 Rotation.Z);
+            _pitch = Mathf.LerpAngle(_pitch, _targetPitch, weight);
+            _view.ApplyPitch(_pitch);
             Velocity = _targetVelocity;
         }
         UpdateAvatarAnimation(step);
@@ -277,53 +295,70 @@ public partial class NetworkPlayer : CharacterBody3D
         _snapshotAccumulator += delta;
         if (_snapshotAccumulator < 1.0 / SnapshotRate) return;
         _snapshotAccumulator = 0;
-        Rpc(nameof(ReceiveSnapshot), GlobalPosition, Velocity, Rotation.Y, IsOnFloor(), _lastReceivedSequence);
+        Rpc(nameof(ReceiveSnapshot), GlobalPosition, Velocity, Rotation.Y, _serverPitch, IsOnFloor(),
+            _lastReceivedSequence);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
         TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 1)]
-    private void SubmitInput(Vector2 move, bool jump, float yaw, uint sequence)
+    private void SubmitInput(Vector2 move, bool jump, float yaw, float pitch, uint sequence)
     {
         if (!RpcSecurity.RequireServer(this, nameof(SubmitInput))) return;
         var sender = Multiplayer.GetRemoteSenderId();
         if (!RpcSecurity.RequireSender(sender, PeerId, nameof(SubmitInput)) ||
             !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(SubmitInput),
                 SessionManager.SessionState.Playing)) return;
+        if (!move.IsFinite() || !float.IsFinite(yaw) || !float.IsFinite(pitch))
+        {
+            RpcSecurity.Reject(nameof(SubmitInput), sender, "non-finite input values");
+            return;
+        }
         if (sequence <= _lastReceivedSequence) return;
         _lastReceivedSequence = sequence;
         NoteActivity(move, jump, yaw);
         _serverMoveInput = move.LimitLength(1f);
         _serverJump |= jump;
         _serverYaw = Mathf.Wrap(yaw, -Mathf.Pi, Mathf.Pi);
+        _serverPitch = Mathf.Clamp(pitch, -PitchLimit, PitchLimit);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
         TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 1)]
     private void ReceiveSnapshot(
-        Vector3 position, Vector3 velocity, float yaw, bool grounded, uint acknowledgedInput)
+        Vector3 position, Vector3 velocity, float yaw, float pitch, bool grounded, uint acknowledgedInput)
     {
         if (IsLocalPlayer)
         {
             _pendingInputs.RemoveAll(input => input.Sequence <= acknowledgedInput);
+            if (_unackedJumpSequence != 0 && acknowledgedInput >= _unackedJumpSequence)
+                _unackedJumpSequence = 0;
             var error = GlobalPosition.DistanceTo(position);
-            if (error > ReconcileThreshold)
-            {
-                // Rewind to the acknowledged server result, then replay inputs the server has
-                // not processed yet. Large errors snap; small ones blend after replay.
-                var predictedBeforeRewind = GlobalPosition;
-                GlobalPosition = position;
-                Velocity = velocity;
-                Rotation = new Vector3(Rotation.X, yaw, Rotation.Z);
-                foreach (var input in _pendingInputs)
-                    ApplyMovement(input.Move, input.Jump, input.Yaw, input.Delta);
-                if (error < HardSnapThreshold)
-                    GlobalPosition = predictedBeforeRewind.Lerp(GlobalPosition, 0.35f);
-            }
+            if (error > ReconcileThreshold) _pendingCorrection = (position, velocity, yaw, error);
             return;
         }
         _targetPosition = position;
         _targetVelocity = velocity;
         _targetYaw = yaw;
         _targetGrounded = grounded;
+        _targetPitch = pitch;
+    }
+
+    // Rewind to the acknowledged server result, then replay inputs the server has not
+    // processed yet. Large errors snap; small ones blend after replay. Must run inside a
+    // physics frame: MoveAndSlide derives its step from the current frame type, so
+    // replaying during RPC delivery (an idle frame) would advance each replayed input by
+    // the render delta instead of the recorded physics delta.
+    private void ApplyPendingCorrection()
+    {
+        if (_pendingCorrection is not { } correction) return;
+        _pendingCorrection = null;
+        var predictedBeforeRewind = GlobalPosition;
+        GlobalPosition = correction.Position;
+        Velocity = correction.Velocity;
+        Rotation = new Vector3(Rotation.X, correction.Yaw, Rotation.Z);
+        foreach (var input in _pendingInputs)
+            ApplyMovement(input.Move, input.Jump, input.Yaw, input.Delta);
+        if (correction.Error < HardSnapThreshold)
+            GlobalPosition = predictedBeforeRewind.Lerp(GlobalPosition, 0.35f);
     }
 }
