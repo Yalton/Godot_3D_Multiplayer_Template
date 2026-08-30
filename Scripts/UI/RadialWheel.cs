@@ -45,6 +45,7 @@ public partial class RadialWheel : Control
         IsOpen = false;
         Visible = false;
         _entries.Clear();
+        _direction = Vector2.Zero;
     }
 
     public void AccumulateMotion(Vector2 relative)
