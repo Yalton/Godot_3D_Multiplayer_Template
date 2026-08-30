@@ -79,6 +79,32 @@ if (( result == 0 )); then
   wait "$kick_rogue" || result=1
   grep -h "SMOKE" "$kick_dir"/*.log || true
   if grep -E "ERROR:|SMOKE .* FAIL" "$kick_dir"/*.log; then result=1; fi
+
+  emote_dir="$(mktemp -d)"
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=emote-server >"$emote_dir/server.log" 2>&1 &
+  emote_server=$!
+  sleep 0.3
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=emote-a >"$emote_dir/a.log" 2>&1 &
+  emote_a=$!
+  sleep 0.3
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=emote-b >"$emote_dir/b.log" 2>&1 &
+  emote_b=$!
+  # EmoteSitter requests its looping emote 0.4s after reaching Playing and holds it for
+  # 5.5s before cancelling — this stagger lands emote-late's join comfortably inside
+  # that window so it snapshots the sit in progress rather than racing the cancel.
+  sleep 2.5
+  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=emote-late >"$emote_dir/late.log" 2>&1 &
+  emote_late=$!
+  wait "$emote_server" || result=1
+  wait "$emote_a" || result=1
+  wait "$emote_b" || result=1
+  wait "$emote_late" || result=1
+  grep -h "SMOKE" "$emote_dir"/*.log || true
+  if grep -E "ERROR:|SMOKE .* FAIL" "$emote_dir"/*.log; then result=1; fi
 fi
 
 if (( result == 0 )); then

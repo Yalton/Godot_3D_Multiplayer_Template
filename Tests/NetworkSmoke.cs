@@ -1,4 +1,5 @@
 using Godot;
+using MultiplayerTemplate.Avatar;
 using MultiplayerTemplate.Network;
 using MultiplayerTemplate.Communication;
 using MultiplayerTemplate.Interaction;
@@ -9,6 +10,13 @@ namespace MultiplayerTemplate.Tests;
 public partial class NetworkSmoke : Node
 {
     private const int Port = 18910;
+    // Looping (state-bearing) emotes from EmoteCatalogue: 5 is "Sit", 6 is "Dance". Two
+    // distinct looping ids let the bad-id probe on emote-b prove its RPC pipe still works
+    // (by landing id 6) without ever being confused for the id-5 sitter emote-late looks
+    // for on emote-a.
+    private const int SitEmoteId = 5;
+    private const int ProofEmoteId = 6;
+    private const int UnknownEmoteId = 9999;
     private string _role = "";
     private string _clientName = "SmokeClient";
     private bool _sawThreePeers;
@@ -32,6 +40,16 @@ public partial class NetworkSmoke : Node
     private bool _startedKickProbe;
     private int _rosterBeforeHostKick;
     private bool _identityRoundTripPassed;
+    private bool _requestedLoopEmote;
+    private bool _cancelledEmoteByMoving;
+    private bool _sawEmoteReplicated;
+    private bool _sawEmoteCancelReplicated;
+    private bool _requestedBadEmote;
+    private bool _sawBadEmoteRefused;
+    private bool _sawProofEmoteApplied;
+    private long _sitterPeerId = -1;
+    private bool _sawLateJoinSpawnedSitterNode;
+    private bool _sawLateJoinEmote;
 
     public override void _Ready()
     {
@@ -123,6 +141,38 @@ public partial class NetworkSmoke : Node
             SessionManager.Instance.JoinEnet("127.0.0.1", Port + 2);
             FinishAfter(3.5, FinishKickRogue);
         }
+        else if (_role == "emote-server")
+        {
+            SessionManager.Instance.PlayerName = "EmoteHost";
+            SessionManager.Instance.HostEnet(Port + 3);
+            FinishAfter(12, FinishEmoteServer);
+        }
+        else if (_role == "emote-a")
+        {
+            // The looping-emote requester: sits down shortly after the match starts,
+            // holds it long enough for emote-late to join mid-sit, then cancels it by
+            // moving.
+            SessionManager.Instance.PlayerName = "EmoteSitter";
+            SessionManager.Instance.JoinEnet("127.0.0.1", Port + 3);
+            FinishAfter(10, FinishEmoteA);
+        }
+        else if (_role == "emote-b")
+        {
+            // The observer: watches EmoteSitter's node from a different process (never
+            // its own), and separately probes an unknown emote id against itself.
+            SessionManager.Instance.PlayerName = "EmoteObserver";
+            SessionManager.Instance.JoinEnet("127.0.0.1", Port + 3);
+            FinishAfter(10, FinishEmoteB);
+        }
+        else if (_role == "emote-late")
+        {
+            // Joins well after EmoteSitter has already sat down, through the same
+            // late-join path host-loss and kick don't exercise: HandleLateJoin /
+            // SpawnForLateJoin while the match is already Playing.
+            SessionManager.Instance.PlayerName = "LateJoiner";
+            SessionManager.Instance.JoinEnet("127.0.0.1", Port + 3);
+            FinishAfter(5, FinishEmoteLate);
+        }
         else
         {
             GD.PushError("Pass --smoke-role=server or --smoke-role=client");
@@ -133,6 +183,8 @@ public partial class NetworkSmoke : Node
     public override void _Process(double delta)
     {
         if (!_sawPlaying) return;
+        if (_role == "emote-b") ObserveSitterFromAnotherClient();
+        if (_role == "emote-late") ObserveLateJoinSnapshot();
         foreach (var node in GetTree().GetNodesInGroup("network_physics"))
             if (node is NetworkPhysicsObject { HeldByPeer: not 0 })
             {
@@ -154,6 +206,8 @@ public partial class NetworkSmoke : Node
         TextChatManager.Instance.SubmitText("smoke-chat");
         if (Multiplayer.IsServer()) _ = SubmitInteractionAfterSpawn();
         if (Multiplayer.IsServer()) _ = DriveAfkProbe();
+        if (_role == "emote-a") _ = DriveEmoteSitter();
+        if (_role == "emote-b") _ = DriveEmoteBadIdProbe();
     }
 
     private async Task SubmitInteractionAfterSpawn()
@@ -191,6 +245,92 @@ public partial class NetworkSmoke : Node
             }
     }
 
+    // Sits down shortly after spawning, holds the emote long enough for emote-late to
+    // join mid-sit and take its snapshot, then cancels it by moving. The move is
+    // simulated the same way a real client would produce it — pressing the actual input
+    // action so ReadLocalInput/SubmitInput carries it to the server — rather than
+    // poking network state directly, so a regression in that path would fail this too.
+    private async Task DriveEmoteSitter()
+    {
+        await ToSignal(GetTree().CreateTimer(0.4), SceneTreeTimer.SignalName.Timeout);
+        var mine = FindOwnPlayer();
+        if (mine != null)
+        {
+            _requestedLoopEmote = true;
+            mine.RequestEmote(SitEmoteId);
+        }
+        await ToSignal(GetTree().CreateTimer(5.5), SceneTreeTimer.SignalName.Timeout);
+        Input.ActionPress("move_forward");
+        await ToSignal(GetTree().CreateTimer(0.6), SceneTreeTimer.SignalName.Timeout);
+        Input.ActionRelease("move_forward");
+        _cancelledEmoteByMoving = true;
+    }
+
+    // Requests an id absent from EmoteCatalogue against itself, then immediately follows
+    // it with a real looping emote on the same connection. The second request is the
+    // load-bearing part of this probe: without it, ActiveEmote staying at None after the
+    // bad id would be indistinguishable from the request never reaching the server at
+    // all. Only seeing the second one land proves the first one was actually evaluated
+    // and refused.
+    private async Task DriveEmoteBadIdProbe()
+    {
+        await ToSignal(GetTree().CreateTimer(0.4), SceneTreeTimer.SignalName.Timeout);
+        var mine = FindOwnPlayer();
+        if (mine == null) return;
+        mine.RequestEmote(UnknownEmoteId);
+        await ToSignal(GetTree().CreateTimer(0.4), SceneTreeTimer.SignalName.Timeout);
+        _requestedBadEmote = true;
+        _sawBadEmoteRefused = mine.ActiveEmote == EmoteCatalogue.None;
+        mine.RequestEmote(ProofEmoteId);
+        await ToSignal(GetTree().CreateTimer(0.4), SceneTreeTimer.SignalName.Timeout);
+        _sawProofEmoteApplied = mine.ActiveEmote == ProofEmoteId &&
+                                SessionManager.Instance.State == SessionManager.SessionState.Playing;
+    }
+
+    // Never returns emote-b's own node: this must observe replication on someone else's
+    // process, or a bug that only updates the requester locally would pass anyway.
+    private void ObserveSitterFromAnotherClient()
+    {
+        if (_sitterPeerId < 0) _sitterPeerId = ResolvePeerIdByName("EmoteSitter");
+        if (_sitterPeerId < 0) return;
+        var sitter = FindPlayerNode(_sitterPeerId);
+        if (sitter == null) return;
+        if (sitter.ActiveEmote == SitEmoteId) _sawEmoteReplicated = true;
+        // Gated on having genuinely seen it active first, so a node that just starts and
+        // stays at None the whole time cannot be mistaken for "the cancel replicated".
+        if (_sawEmoteReplicated && sitter.ActiveEmote == EmoteCatalogue.None)
+            _sawEmoteCancelReplicated = true;
+    }
+
+    private void ObserveLateJoinSnapshot()
+    {
+        if (_sitterPeerId < 0) _sitterPeerId = ResolvePeerIdByName("EmoteSitter");
+        if (_sitterPeerId < 0) return;
+        var sitter = FindPlayerNode(_sitterPeerId);
+        if (sitter == null) return;
+        // Distinguishes "the sitter's node never spawned for me" from "it spawned but
+        // ActiveEmote was wrong" — collapsing those into one flag would hide which half
+        // of the late-join path broke.
+        _sawLateJoinSpawnedSitterNode = true;
+        if (sitter.ActiveEmote == SitEmoteId) _sawLateJoinEmote = true;
+    }
+
+    private NetworkPlayer? FindOwnPlayer() => FindPlayerNode(Multiplayer.GetUniqueId());
+
+    private NetworkPlayer? FindPlayerNode(long peerId)
+    {
+        foreach (var node in GetTree().GetNodesInGroup("network_players"))
+            if (node is NetworkPlayer player && player.PeerId == peerId) return player;
+        return null;
+    }
+
+    private static long ResolvePeerIdByName(string name)
+    {
+        foreach (var (peerId, data) in SessionManager.Instance.Players)
+            if (data.GetValueOrDefault("name", "").AsString() == name) return peerId;
+        return -1;
+    }
+
     private void OnRoster(Godot.Collections.Dictionary<long, Godot.Collections.Dictionary> players)
     {
         _sawThreePeers |= players.Count == 3;
@@ -218,6 +358,22 @@ public partial class NetworkSmoke : Node
                     SessionManager.Instance.RequestKick(peerId, "rogue kick");
                     break;
                 }
+        }
+        if (_role == "emote-server" && players.Count == 3 && !_requestedStart)
+        {
+            var allReady = true;
+            foreach (var (id, data) in players)
+                if (id != 1 && !data.GetValueOrDefault("ready", false).AsBool()) { allReady = false; break; }
+            if (allReady)
+            {
+                _requestedStart = true;
+                SessionManager.Instance.StartMatch();
+            }
+        }
+        if ((_role == "emote-a" || _role == "emote-b") && players.Count == 3 && !_requestedReady)
+        {
+            _requestedReady = true;
+            SessionManager.Instance.SetReady(true);
         }
         if (_role is not ("server" or "client")) return;
         if (players.Count != 3) return;
@@ -348,6 +504,60 @@ public partial class NetworkSmoke : Node
               "disconnected; SMOKE KICK SERVER is what proves no one else was removed)"
             : $"SMOKE KICK ROGUE FAIL attempted={_requestedRogueKick}, " +
               $"state={SessionManager.Instance.State}");
+        SessionManager.Instance.DisconnectSession(false);
+        GetTree().Quit(success ? 0 : 1);
+    }
+
+    private void FinishEmoteServer()
+    {
+        var success = _sawPlaying && SessionManager.Instance.Players.Count == 1;
+        GD.Print(success
+            ? "SMOKE EMOTE SERVER PASS (hosted the sit/late-join/bad-id scenarios)"
+            : $"SMOKE EMOTE SERVER FAIL playing={_sawPlaying}, roster={SessionManager.Instance.Players}");
+        SessionManager.Instance.DisconnectSession(false);
+        GetTree().Quit(success ? 0 : 1);
+    }
+
+    private void FinishEmoteA()
+    {
+        // A regression here would be caught on emote-b's side (SMOKE EMOTE B), which
+        // watches this peer from a different process; this just confirms the requester
+        // itself carried out both actions and never got disconnected doing so.
+        var success = _sawPlaying && _requestedLoopEmote && _cancelledEmoteByMoving &&
+                      SessionManager.Instance.State == SessionManager.SessionState.Playing;
+        GD.Print(success
+            ? "SMOKE EMOTE A PASS (requested a looping emote, then cancelled it by moving)"
+            : $"SMOKE EMOTE A FAIL playing={_sawPlaying}, requested={_requestedLoopEmote}, " +
+              $"cancelled={_cancelledEmoteByMoving}, state={SessionManager.Instance.State}");
+        SessionManager.Instance.DisconnectSession(false);
+        GetTree().Quit(success ? 0 : 1);
+    }
+
+    private void FinishEmoteB()
+    {
+        // Movement cancelling the emote is scenario 2, and is only genuine if scenario 1
+        // (replication) was seen first — see the latch in ObserveSitterFromAnotherClient.
+        // The bad-id half proves both the refusal (ActiveEmote never took 9999) and that
+        // the refusal was not silence (the follow-up valid id did land).
+        var success = _sawEmoteReplicated && _sawEmoteCancelReplicated &&
+                      _requestedBadEmote && _sawBadEmoteRefused && _sawProofEmoteApplied;
+        GD.Print(success
+            ? "SMOKE EMOTE B PASS (saw replication and cancellation on another peer; " +
+              "unknown id refused without disconnecting, valid id after it still landed)"
+            : $"SMOKE EMOTE B FAIL replicated={_sawEmoteReplicated}, " +
+              $"cancelReplicated={_sawEmoteCancelReplicated}, badRequested={_requestedBadEmote}, " +
+              $"badRefused={_sawBadEmoteRefused}, proofApplied={_sawProofEmoteApplied}");
+        SessionManager.Instance.DisconnectSession(false);
+        GetTree().Quit(success ? 0 : 1);
+    }
+
+    private void FinishEmoteLate()
+    {
+        var success = _sawPlaying && _sawLateJoinSpawnedSitterNode && _sawLateJoinEmote;
+        GD.Print(success
+            ? "SMOKE EMOTE LATE PASS (late joiner saw the sitter already emoting)"
+            : $"SMOKE EMOTE LATE FAIL playing={_sawPlaying}, " +
+              $"sitterSpawned={_sawLateJoinSpawnedSitterNode}, sawEmote={_sawLateJoinEmote}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }
