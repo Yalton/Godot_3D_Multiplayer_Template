@@ -157,6 +157,17 @@ For local controls, use `LocalInputContext.Instance.GameplaySuppressed` instead 
 individual menus. Register modal UI with `SetBlocked(owner, true)` while it is open and clear
 the same owner when it closes.
 
+### Choose the input phase
+
+Use `_UnhandledInput` for normal gameplay controls so focused UI and earlier consumers can
+handle an event first. Use `_Input` only when a control must run before GUI or gameplay
+consumers, such as a wheel that must see mouse motion before camera look or a panel that must
+close while one of its controls has focus. An early-phase handler must respect
+`LocalInputContext.Instance.GameplaySuppressed`; the exception is an already-open surface's own
+close or release path. `GameplaySuppressed` also accounts for focused text entry and an open dev
+console; `SetBlocked(owner, true)` adds modal ownership and changes mouse capture. Mark an event
+handled only when the handler actually consumed it.
+
 ## Replicated state must match its owner's lifetime
 
 When you add replicated state, the node that writes it must live at least as long as the

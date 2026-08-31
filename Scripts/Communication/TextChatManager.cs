@@ -40,13 +40,11 @@ public partial class TextChatManager : CanvasLayer
     private RichTextLabel _log = null!;
     private LineEdit _input = null!;
     private readonly RpcRateLimiter _rateLimiter = new();
-    private readonly RpcCooldowns _rejectLog = new();
 
     public override void _Ready()
     {
         Instance = this;
         Multiplayer.PeerDisconnected += _rateLimiter.Forget;
-        Multiplayer.PeerDisconnected += _rejectLog.Forget;
         if (DisplayServer.GetName() == "headless")
         {
             ProcessMode = ProcessModeEnum.Disabled;
@@ -134,7 +132,7 @@ public partial class TextChatManager : CanvasLayer
     {
         if (!RpcSecurity.RequireServer(this, nameof(RequestQuickChat)) ||
             !RpcSecurity.RequireKnownSender(this, nameof(RequestQuickChat), out var sender) ||
-            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(RequestQuickChat),
+            !RpcSecurity.RequireState(SessionManager.Instance.State, sender, nameof(RequestQuickChat),
                 SessionManager.SessionState.Lobby, SessionManager.SessionState.Playing)) return;
         AcceptQuickChat(sender, id);
     }
@@ -143,15 +141,12 @@ public partial class TextChatManager : CanvasLayer
     {
         if (!_rateLimiter.Allow(peerId, nameof(RequestQuickChat), 5, 4000))
         {
-            // Throttled: warnings are unsuppressible and a wheel is trivially spammable.
-            if (_rejectLog.TryConsume(peerId, nameof(RequestQuickChat), 1000))
-                RpcSecurity.Reject(nameof(RequestQuickChat), peerId, "rate limit exceeded");
+            RpcSecurity.Reject(nameof(RequestQuickChat), peerId, "rate limit exceeded");
             return;
         }
         if (!QuickChatLines.TryGet(id, out var line))
         {
-            if (_rejectLog.TryConsume(peerId, nameof(RequestQuickChat), 1000))
-                RpcSecurity.Reject(nameof(RequestQuickChat), peerId, $"unknown quick chat line {id}");
+            RpcSecurity.Reject(nameof(RequestQuickChat), peerId, $"unknown quick chat line {id}");
             return;
         }
         AcceptMessage(peerId, line.Text);
@@ -171,14 +166,12 @@ public partial class TextChatManager : CanvasLayer
     {
         if (!RpcSecurity.RequireServer(this, nameof(RequestMessage)) ||
             !RpcSecurity.RequireKnownSender(this, nameof(RequestMessage), out var sender) ||
-            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(RequestMessage),
+            !RpcSecurity.RequireState(SessionManager.Instance.State, sender, nameof(RequestMessage),
                 SessionManager.SessionState.Lobby, SessionManager.SessionState.Loading,
                 SessionManager.SessionState.Playing)) return;
         if (!_rateLimiter.Allow(sender, nameof(RequestMessage), 5, 4000))
         {
-            // Throttled: warnings are unsuppressible and free-text chat is trivially spammable.
-            if (_rejectLog.TryConsume(sender, nameof(RequestMessage), 1000))
-                RpcSecurity.Reject(nameof(RequestMessage), sender, "rate limit exceeded");
+            RpcSecurity.Reject(nameof(RequestMessage), sender, "rate limit exceeded");
             return;
         }
         AcceptMessage(sender, text);

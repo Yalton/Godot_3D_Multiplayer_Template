@@ -42,7 +42,6 @@ public partial class NetworkPlayer : CharacterBody3D
     private (Vector3 Position, Vector3 Velocity, float Yaw, float Error)? _pendingCorrection;
     private Label _interactionPrompt = null!;
     private readonly List<PredictedInput> _pendingInputs = new();
-    private readonly RpcCooldowns _rejectLog = new();
     private readonly RpcRateLimiter _emoteLimiter = new();
     public int ActiveEmote { get; private set; } = EmoteCatalogue.None;
     private double _lastInputSeconds;
@@ -339,15 +338,11 @@ public partial class NetworkPlayer : CharacterBody3D
         if (!RpcSecurity.RequireServer(this, nameof(SubmitInput))) return;
         var sender = Multiplayer.GetRemoteSenderId();
         if (!RpcSecurity.RequireSender(sender, PeerId, nameof(SubmitInput)) ||
-            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(SubmitInput),
+            !RpcSecurity.RequireState(SessionManager.Instance.State, sender, nameof(SubmitInput),
                 SessionManager.SessionState.Playing)) return;
         if (!move.IsFinite() || !float.IsFinite(yaw) || !float.IsFinite(pitch))
         {
-            // Always drop the packet, but log at most once a second per peer. Input arrives
-            // at the physics rate, so a client sending NaN every tick would otherwise emit
-            // ~60 warnings a second — and warnings are no longer suppressible.
-            if (_rejectLog.TryConsume(sender, nameof(SubmitInput), 1000))
-                RpcSecurity.Reject(nameof(SubmitInput), sender, "non-finite input values");
+            RpcSecurity.Reject(nameof(SubmitInput), sender, "non-finite input values");
             return;
         }
         if (sequence <= _lastReceivedSequence) return;
@@ -376,21 +371,15 @@ public partial class NetworkPlayer : CharacterBody3D
     {
         if (!RpcSecurity.RequireServer(this, nameof(SubmitEmote))) return;
         var sender = Multiplayer.GetRemoteSenderId();
-        // Throttled like the rate-limit and unknown-id rejects in SubmitEmoteServer below:
-        // a modified client can target another player's node and would otherwise emit one
-        // unsuppressible warning per packet. Only the logging is throttled — the request
-        // is still always refused.
         if (sender != PeerId)
         {
-            if (_rejectLog.TryConsume(sender, nameof(SubmitEmote), 1000))
-                RpcSecurity.Reject(nameof(SubmitEmote), sender, $"sender does not own peer {PeerId}");
+            RpcSecurity.Reject(nameof(SubmitEmote), sender, $"sender does not own peer {PeerId}");
             return;
         }
         if (SessionManager.Instance.State != SessionManager.SessionState.Playing)
         {
-            if (_rejectLog.TryConsume(sender, nameof(SubmitEmote), 1000))
-                RpcSecurity.Reject(nameof(SubmitEmote), sender,
-                    $"invalid session state {SessionManager.Instance.State}");
+            RpcSecurity.Reject(nameof(SubmitEmote), sender,
+                $"invalid session state {SessionManager.Instance.State}");
             return;
         }
         SubmitEmoteServer(sender, id);
@@ -400,15 +389,12 @@ public partial class NetworkPlayer : CharacterBody3D
     {
         if (!_emoteLimiter.Allow(sender, nameof(SubmitEmote), 4, 2000))
         {
-            // Throttled: a wheel is trivially spammable and warnings are no longer suppressed.
-            if (_rejectLog.TryConsume(sender, nameof(SubmitEmote), 1000))
-                RpcSecurity.Reject(nameof(SubmitEmote), sender, "rate limit exceeded");
+            RpcSecurity.Reject(nameof(SubmitEmote), sender, "rate limit exceeded");
             return;
         }
         if (id != EmoteCatalogue.None && !EmoteCatalogue.TryGet(id, out _))
         {
-            if (_rejectLog.TryConsume(sender, nameof(SubmitEmote), 1000))
-                RpcSecurity.Reject(nameof(SubmitEmote), sender, $"unknown emote {id}");
+            RpcSecurity.Reject(nameof(SubmitEmote), sender, $"unknown emote {id}");
             return;
         }
         SetEmoteServer(id);

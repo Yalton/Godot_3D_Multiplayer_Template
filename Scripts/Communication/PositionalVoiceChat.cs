@@ -131,7 +131,7 @@ public partial class PositionalVoiceChat : Node
     {
         if (!RpcSecurity.RequireServer(this, nameof(SubmitVoice)) ||
             !RpcSecurity.RequireKnownSender(this, nameof(SubmitVoice), out var sender) ||
-            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(SubmitVoice),
+            !RpcSecurity.RequireState(SessionManager.Instance.State, sender, nameof(SubmitVoice),
                 SessionManager.SessionState.Playing) || pcm.Length > 2048) return;
         if (!_rateLimiter.Allow(sender, nameof(SubmitVoice), 60, 1000))
         {

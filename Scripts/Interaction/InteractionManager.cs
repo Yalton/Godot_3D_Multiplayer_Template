@@ -41,7 +41,7 @@ public partial class InteractionManager : Node
     {
         if (!RpcSecurity.RequireServer(this, nameof(RequestInteraction)) ||
             !RpcSecurity.RequireKnownSender(this, nameof(RequestInteraction), out var sender) ||
-            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(RequestInteraction),
+            !RpcSecurity.RequireState(SessionManager.Instance.State, sender, nameof(RequestInteraction),
                 SessionManager.SessionState.Playing)) return;
         if (!_rateLimiter.Allow(sender, nameof(RequestInteraction), 12, 1000))
         {

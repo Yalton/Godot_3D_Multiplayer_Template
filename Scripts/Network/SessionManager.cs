@@ -153,6 +153,7 @@ public partial class SessionManager : Node
             Multiplayer.MultiplayerPeer = null;
         }
         Players.Clear();
+        RpcSecurity.Reset();
         Transport = TransportKind.None;
         SetState(SessionState.Offline);
         RosterChanged?.Invoke(Players);
@@ -203,6 +204,7 @@ public partial class SessionManager : Node
     {
         DebugLogger.Instance.Info(LogModule, $"Peer disconnected: {peerId}");
         _requestLimiter.Forget(peerId);
+        RpcSecurity.Forget(peerId);
         if (!Multiplayer.IsServer()) return;
         Players.Remove(peerId);
         Rpc(nameof(SyncRoster), Players);
@@ -246,7 +248,7 @@ public partial class SessionManager : Node
         {
             var reason = $"Incompatible build. Host requires {NetworkBuildInfo.BuildId}; " +
                          $"client sent {buildId} ({platform}).";
-            DebugLogger.Instance.Warning(LogModule, $"Rejected peer {sender}: {reason}");
+            RpcSecurity.Reject(nameof(RegisterPlayer), sender, reason);
             RpcId(sender, nameof(ConnectionRejected), reason);
             _ = DisconnectRejectedPeer(sender);
             return;
@@ -294,7 +296,7 @@ public partial class SessionManager : Node
     {
         if (!RpcSecurity.RequireServer(this, nameof(RequestReady)) ||
             !RpcSecurity.RequireKnownSender(this, nameof(RequestReady), out var sender) ||
-            !RpcSecurity.RequireState(State, nameof(RequestReady), SessionState.Lobby)) return;
+            !RpcSecurity.RequireState(State, sender, nameof(RequestReady), SessionState.Lobby)) return;
         if (!_requestLimiter.Allow(sender, nameof(RequestReady), 6, 2000))
         {
             RpcSecurity.Reject(nameof(RequestReady), sender, "rate limit exceeded");
@@ -344,7 +346,7 @@ public partial class SessionManager : Node
     {
         if (!RpcSecurity.RequireServer(this, nameof(RequestKickRpc)) ||
             !RpcSecurity.RequireKnownSender(this, nameof(RequestKickRpc), out var sender) ||
-            !RpcSecurity.RequireState(State, nameof(RequestKickRpc),
+            !RpcSecurity.RequireState(State, sender, nameof(RequestKickRpc),
                 SessionState.Lobby, SessionState.Playing)) return;
         if (!_requestLimiter.Allow(sender, nameof(RequestKickRpc), 4, 5000))
         {

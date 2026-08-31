@@ -167,7 +167,7 @@ public partial class MatchSceneCoordinator : Node
     {
         if (!RpcSecurity.RequireServer(this, nameof(ReportSceneLoaded)) ||
             !RpcSecurity.RequireKnownSender(this, nameof(ReportSceneLoaded), out var sender) ||
-            !RpcSecurity.RequireState(SessionManager.Instance.State, nameof(ReportSceneLoaded),
+            !RpcSecurity.RequireState(SessionManager.Instance.State, sender, nameof(ReportSceneLoaded),
                 SessionManager.SessionState.Loading, SessionManager.SessionState.Playing) ||
             generation != _loadGeneration) return;
         MarkPeerLoaded(sender, generation);

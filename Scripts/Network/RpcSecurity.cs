@@ -7,6 +7,7 @@ namespace MultiplayerTemplate.Network;
 public static class RpcSecurity
 {
     private const string LogModule = "RpcSecurity";
+    private static readonly RpcRejectLogThrottle RejectLogThrottle = new();
 
     public static bool RequireServer(Node context, string action) =>
         context.Multiplayer.IsServer() || Reject(action, 0, "handler is not running on the server");
@@ -22,8 +23,9 @@ public static class RpcSecurity
         sender == expected || Reject(action, sender, $"sender does not own peer {expected}");
 
     public static bool RequireState(
-        SessionManager.SessionState state, string action, params SessionManager.SessionState[] allowed) =>
-        allowed.Contains(state) || Reject(action, 0, $"invalid session state {state}");
+        SessionManager.SessionState state, long sender, string action,
+        params SessionManager.SessionState[] allowed) =>
+        allowed.Contains(state) || Reject(action, sender, $"invalid session state {state}");
 
     public static bool WithinDistance(Vector3 from, Vector3 to, float maximum, string action, long sender) =>
         from.DistanceSquaredTo(to) <= maximum * maximum ||
@@ -43,9 +45,30 @@ public static class RpcSecurity
 
     public static bool Reject(string action, long sender, string reason)
     {
-        DebugLogger.Instance.Warning(LogModule, $"Rejected {action} from peer {sender}: {reason}");
+        if (RejectLogThrottle.ShouldLog(sender, action))
+            DebugLogger.Instance.Warning(LogModule, $"Rejected {action} from peer {sender}: {reason}");
         return false;
     }
+
+    public static void Forget(long peerId) => RejectLogThrottle.Forget(peerId);
+
+    public static void Reset() => RejectLogThrottle.Clear();
+}
+
+/// <summary>Suppresses repeated reject warnings without suppressing the rejection itself.</summary>
+public sealed class RpcRejectLogThrottle
+{
+    private const long CooldownMs = 1000;
+    private readonly RpcCooldowns _cooldowns;
+
+    public RpcRejectLogThrottle(Func<long>? nowMs = null) => _cooldowns = new RpcCooldowns(nowMs);
+
+    public bool ShouldLog(long peerId, string action) =>
+        _cooldowns.TryConsume(peerId, action, CooldownMs);
+
+    public void Forget(long peerId) => _cooldowns.Forget(peerId);
+
+    public void Clear() => _cooldowns.Clear();
 }
 
 /// <summary>Fixed-window per-peer/per-action RPC limiter.</summary>
@@ -104,4 +127,6 @@ public sealed class RpcCooldowns
         foreach (var key in _nextAllowed.Keys.Where(key => key.Peer == peerId).ToArray())
             _nextAllowed.Remove(key);
     }
+
+    public void Clear() => _nextAllowed.Clear();
 }

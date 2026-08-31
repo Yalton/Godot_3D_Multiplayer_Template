@@ -91,3 +91,41 @@ public sealed class RpcCooldownTests
         Assert.False(new RpcCooldowns(() => 1000).TryConsume(1, "a", -1));
     }
 }
+
+public sealed class RpcRejectLogThrottleTests
+{
+    [Fact]
+    public void SuppressesRepeatedRejectsForTheSamePeerAndActionUntilTheIntervalExpires()
+    {
+        long now = 1000;
+        var throttle = new RpcRejectLogThrottle(() => now);
+
+        Assert.True(throttle.ShouldLog(7, "SubmitInput"));
+        Assert.False(throttle.ShouldLog(7, "SubmitInput"));
+
+        now = 2000;
+
+        Assert.True(throttle.ShouldLog(7, "SubmitInput"));
+    }
+
+    [Fact]
+    public void DoesNotMergeDifferentPeersOrActions()
+    {
+        var throttle = new RpcRejectLogThrottle(() => 1000);
+
+        Assert.True(throttle.ShouldLog(7, "SubmitInput"));
+        Assert.True(throttle.ShouldLog(8, "SubmitInput"));
+        Assert.True(throttle.ShouldLog(7, "SubmitEmote"));
+    }
+
+    [Fact]
+    public void ForgetAllowsAReconnectedPeerToLogImmediately()
+    {
+        var throttle = new RpcRejectLogThrottle(() => 1000);
+        Assert.True(throttle.ShouldLog(7, "SubmitInput"));
+
+        throttle.Forget(7);
+
+        Assert.True(throttle.ShouldLog(7, "SubmitInput"));
+    }
+}
