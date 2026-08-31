@@ -64,7 +64,10 @@ public partial class BlockmanRig : AvatarRig
 
     public override void ApplyAppearance(AvatarAppearance appearance)
     {
-        foreach (var material in _materials) material.AlbedoColor = appearance.BodyColor;
+        var definition = CosmeticCatalogue.All.FirstOrDefault(entry =>
+            entry.Slot == CosmeticSlot.BodyColor && entry.Id == appearance.BodyColorId);
+        var color = new Color(definition.Red / 255f, definition.Green / 255f, definition.Blue / 255f);
+        foreach (var material in _materials) material.AlbedoColor = color;
     }
 
     private static string StateNodeName(LocomotionState state) => state switch

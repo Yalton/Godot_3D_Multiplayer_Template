@@ -19,7 +19,7 @@ public static class AvatarFactory
         if (DisplayServer.GetName() == "headless") return null;
         var rig = BuildConfigured() ?? new BlockmanRig();
         rig.Name = "Avatar";
-        rig.Ready += () => rig.ApplyAppearance(AvatarRig.DefaultAppearanceFor(peerId));
+        rig.Ready += () => rig.ApplyAppearance(AvatarAppearance.Default);
         return rig;
     }
 
