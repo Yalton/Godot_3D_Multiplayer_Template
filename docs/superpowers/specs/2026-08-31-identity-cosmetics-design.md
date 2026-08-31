@@ -62,13 +62,13 @@ not authority: the roster value returned by the server remains the one rendered 
 
 ## Server authority and replication
 
-Initial registration includes the selected appearance with the existing identity request. The
-server validates and normalizes it through `CosmeticCatalogue` before constructing
+Initial registration appends the five selected appearance IDs to the existing identity request.
+The server reconstructs, validates, and normalizes `AvatarAppearance` through `CosmeticCatalogue` before constructing
 `PlayerIdentity`, then syncs the ordinary roster. The protocol version increments because the
 registration RPC signature changes.
 
-While in `Lobby`, a client may request an appearance update. The request carries only the five
-IDs and is handled by peer 1. It follows the repository contract:
+While in `Lobby`, a client may request an appearance update. The RPC carries only the five
+integer IDs (rather than a custom C# value type) and is handled by peer 1. It follows the repository contract:
 
 1. Derive the sender from `GetRemoteSenderId()`.
 2. Require the server, a known sender, and the lobby state through `RpcSecurity`.
