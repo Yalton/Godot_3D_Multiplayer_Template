@@ -125,9 +125,7 @@ public partial class SessionManager : Node
         if (!Multiplayer.HasMultiplayerPeer()) return;
         if (Multiplayer.IsServer())
         {
-            var normalized = CosmeticCatalogue.Normalize(appearance);
-            if (normalized != appearance) return;
-            UpdateAppearanceServer(Multiplayer.GetUniqueId(), normalized);
+            RequestAppearanceServer(Multiplayer.GetUniqueId(), appearance);
             return;
         }
         RpcId(1, nameof(RequestAppearanceRpc), appearance.BodyColorId, appearance.HeadId,
@@ -185,7 +183,8 @@ public partial class SessionManager : Node
     {
         var steamId = Transport == TransportKind.Steam ? Steam.SteamId : 0;
         var platform = steamId != 0 ? "Steam" : "LAN";
-        Players[1] = new PlayerIdentity(1, PlayerName, platform, steamId, true, true, false).ToDictionary();
+        var appearance = CosmeticCatalogue.Normalize(AppearanceProfileService.Instance.RequestedAppearance);
+        Players[1] = new PlayerIdentity(1, PlayerName, platform, steamId, true, true, false, appearance).ToDictionary();
         RosterChanged?.Invoke(Players);
     }
 
@@ -293,15 +292,25 @@ public partial class SessionManager : Node
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void RequestAppearanceRpc(int bodyColorId, int headId, int backId, int hipsId, int handId)
     {
-        if (!RpcSecurity.RequireServer(this, nameof(RequestAppearanceRpc)) ||
-            !RpcSecurity.RequireKnownSender(this, nameof(RequestAppearanceRpc), out var sender) ||
-            !RpcSecurity.RequireState(State, sender, nameof(RequestAppearanceRpc), SessionState.Lobby)) return;
+        if (!RpcSecurity.RequireServer(this, nameof(RequestAppearanceRpc))) return;
+        var sender = Multiplayer.GetRemoteSenderId();
+        RequestAppearanceServer(sender, new AvatarAppearance(bodyColorId, headId, backId, hipsId, handId));
+    }
+
+    private void RequestAppearanceServer(long sender, AvatarAppearance requested)
+    {
+        if (!RpcSecurity.RequireServer(this, nameof(RequestAppearanceRpc))) return;
+        if (!Players.ContainsKey(sender))
+        {
+            RpcSecurity.Reject(nameof(RequestAppearanceRpc), sender, "sender is not registered");
+            return;
+        }
+        if (!RpcSecurity.RequireState(State, sender, nameof(RequestAppearanceRpc), SessionState.Lobby)) return;
         if (!_requestLimiter.Allow(sender, nameof(RequestAppearanceRpc), 6, 5000))
         {
             RpcSecurity.Reject(nameof(RequestAppearanceRpc), sender, "rate limit exceeded");
             return;
         }
-        var requested = new AvatarAppearance(bodyColorId, headId, backId, hipsId, handId);
         var normalized = CosmeticCatalogue.Normalize(requested);
         if (normalized != requested)
         {

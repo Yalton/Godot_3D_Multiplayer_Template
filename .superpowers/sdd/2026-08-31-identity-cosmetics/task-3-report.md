@@ -32,3 +32,35 @@
 - No rendering/UI work was introduced.
 - Registration deliberately normalizes legacy/malformed values; lobby updates reject malformed IDs so an invalid request cannot mutate canonical roster state.
 - Full xUnit and the tail of the smoke suite need a rerun in an environment without the 30-second command cap and with a compatible .NET test host.
+
+## Fix Round 1
+
+### Review fixes
+
+- Host `RequestAppearance` now enters the same `RequestAppearanceServer` gate as the RPC path. That gate requires server authority, a registered sender, Lobby state, per-peer rate-limit allowance, and rejects malformed appearance IDs through `RpcSecurity.Reject`. Remote RPC senders are still derived with `GetRemoteSenderId`; host calls use the authoritative local unique ID.
+- `AddHost` now normalizes `AppearanceProfileService.Instance.RequestedAppearance` and stores it in the initial host `PlayerIdentity`.
+- Smoke now records a ClientA Playing-state request only from the `StateChanged`/roster flow after `State == Playing`, and asserts the canonical appearance remains unchanged. It also stores a non-default host profile before hosting and proves a host request in Playing is rejected.
+
+### TDD evidence
+
+- RED: after tightening the smoke checks and before production changes, `dotnet build && bash Tests/run_multiplayer_smoke.sh` built successfully but failed the server scenario. The final host roster showed default appearance (`appearance_body_color: 1`) despite the saved red host profile; the pre-fix direct host request also changed it during Playing.
+- GREEN: after the shared gate and `AddHost` changes, `dotnet build` passed (0 warnings/errors) and the complete smoke harness passed.
+
+### Verification
+
+- `dotnet build` — passed, 0 warnings/errors.
+- `dotnet test /data/fast/Projects/Tech/Games/Godot/3DMultiplayerTemplate/MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj --settings .../Tests/coverage.runsettings --collect:"XPlat Code Coverage" --results-directory /tmp/task3-test-results --verbosity minimal` — passed: 128/128.
+- Full multiplayer smoke was started in a detached session and polled past the command runner's 30-second foreground cap. It finished with `MULTIPLAYER HARNESS PASS`, including server/client appearance coverage plus host-loss, dedicated, kick, and emote scenarios.
+- `rg -n "RegisterPlayer|RequestAppearanceRpc|RequestAppearance" Scripts Tests` — passed.
+- `git diff --check` — passed.
+
+### Files changed
+
+- `Scripts/Network/SessionManager.cs`
+- `Tests/NetworkSmoke.cs`
+- `.superpowers/sdd/2026-08-31-identity-cosmetics/task-3-report.md`
+
+### Self-review and concerns
+
+- Host and remote requests now share state, registration, rate-limit, normalization, and roster-sync behavior; rendering/UI remains out of scope.
+- The report's original concern about unit tests and full smoke is resolved when commands use this physical checkout and the detached smoke invocation avoids the foreground cap.
