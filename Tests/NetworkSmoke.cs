@@ -4,6 +4,7 @@ using MultiplayerTemplate.Network;
 using MultiplayerTemplate.Communication;
 using MultiplayerTemplate.Interaction;
 using MultiplayerTemplate.Game;
+using MultiplayerTemplate.UI;
 
 namespace MultiplayerTemplate.Tests;
 
@@ -66,6 +67,9 @@ public partial class NetworkSmoke : Node
     private bool _clientAExistingRigUpdated;
     private BlockmanRig? _clientARigBeforeLobbyUpdate;
     private GameWorld? _lobbyAppearanceWorld;
+    private bool _appearancePanelPassed;
+    private bool _appearancePanelProbeStarted;
+    private AppearanceCustomizationPanel? _appearancePanel;
 
     public override void _Ready()
     {
@@ -80,6 +84,8 @@ public partial class NetworkSmoke : Node
             _sawPlaying |= current == SessionManager.SessionState.Playing;
             if (current == SessionManager.SessionState.Playing)
             {
+                _appearancePanelPassed |= _appearancePanel is { IsOpen: false } &&
+                                          !LocalInputContext.Instance.GameplaySuppressed;
                 SubmitFeatureChecks();
                 RequestPlayingAppearanceProbeIfReady();
             }
@@ -377,12 +383,11 @@ public partial class NetworkSmoke : Node
         }
         if (players.TryGetValue(1, out var hostData))
             _hostAppearanceRegistrationPassed |= PlayerIdentity.FromDictionary(1, hostData).Appearance == HostSmokeAppearance;
-        if (_role == "client" && _clientName == "ClientA" && players.Count == 3 && !_appearanceUpdateRequested &&
+        if (_role == "client" && _clientName == "ClientA" && players.Count == 3 && !_appearancePanelProbeStarted &&
             SessionManager.Instance.State == SessionManager.SessionState.Lobby)
         {
-            _appearanceUpdateRequested = true;
-            PrepareClientARigForLobbyUpdate(clientA);
-            _ = DriveAppearanceProbes();
+            _appearancePanelProbeStarted = true;
+            _ = DriveAppearancePanelProbe();
         }
         RequestPlayingAppearanceProbeIfReady();
         if (_role == "kick-server" && players.Count == 3 && !_startedKickProbe && Multiplayer.IsServer())
@@ -418,6 +423,7 @@ public partial class NetworkSmoke : Node
         }
         if (_role is not ("server" or "client")) return;
         if (players.Count != 3) return;
+        if (_role == "client" && _clientName == "ClientA" && !_appearancePanelPassed) return;
         if (!Multiplayer.IsServer() && !_requestedReady)
         {
             _requestedReady = true;
@@ -449,6 +455,40 @@ public partial class NetworkSmoke : Node
         _appearanceInvalidRefused = TryMyAppearance(out var appearance) && appearance == LobbyUpdatedAppearance;
         _appearancePlayingRequestPending = true;
         RequestPlayingAppearanceProbeIfReady();
+    }
+
+    // This is deliberately an engine-level contract: it proves the actual modal owns a
+    // standalone preview rig, updates the local intent, and reaches the authoritative
+    // roster. The scene is headless, so mouse mode is already Visible; the blocker is the
+    // portable assertion that opening the panel frees gameplay input.
+    private async Task DriveAppearancePanelProbe()
+    {
+        _appearancePanel = new AppearanceCustomizationPanel { Name = "SmokeAppearancePanel" };
+        AddChild(_appearancePanel);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        _appearancePanel.ShowForLobby();
+        var body = _appearancePanel.FindChild("BodyColorSelect", true, false) as OptionButton;
+        var opened = _appearancePanel.IsOpen && _appearancePanel.PreviewRig != null &&
+                     LocalInputContext.Instance.GameplaySuppressed &&
+                     Input.MouseMode == Input.MouseModeEnum.Visible;
+        if (body == null)
+        {
+            _appearancePanel.Hide();
+            return;
+        }
+        body.Select(2);
+        body.EmitSignal(OptionButton.SignalName.ItemSelected, 2L);
+        await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
+        var updated = AppearanceProfileService.Instance.RequestedAppearance.BodyColorId == CosmeticCatalogue.RedBodyId &&
+                      TryMyAppearance(out var rosterAppearance) &&
+                      rosterAppearance.BodyColorId == CosmeticCatalogue.RedBodyId &&
+                      body.GetItemId(body.Selected) == CosmeticCatalogue.RedBodyId &&
+                      _appearancePanel.PreviewRig != null &&
+                      RigReflects(_appearancePanel.PreviewRig, rosterAppearance);
+        _appearancePanelPassed = opened && updated;
+        _appearanceUpdateRequested = true;
+        PrepareClientARigForLobbyUpdate(ResolvePeerIdByName("ClientA"));
+        _ = DriveAppearanceProbes();
     }
 
     private void RequestPlayingAppearanceProbeIfReady()
@@ -500,7 +540,8 @@ public partial class NetworkSmoke : Node
                       avatarGuard && _sawAfkFlag && _sawAfkCleared && _appearanceRegistrationPassed &&
                       _rigAppearanceRenderingPassed &&
                       (_clientName != "ClientA" || (_spawnedClientAAppearanceRendered &&
-                                                     _clientALobbyAppearanceUpdated && _clientAExistingRigUpdated)) &&
+                                                     _clientALobbyAppearanceUpdated && _clientAExistingRigUpdated &&
+                                                     _appearancePanelPassed)) &&
                       (_clientName != "ClientA" || (_appearanceInvalidRefused && _appearancePlayingRefused &&
                                                      _appearancePlayingRequestedInPlaying));
         GD.Print(success
@@ -510,7 +551,8 @@ public partial class NetworkSmoke : Node
               $"clock={_clockSynchronized}, quality={_qualitySampled}, identityRoundTrip={_identityRoundTripPassed}, " +
               $"avatarGuard={avatarGuard}, afkSet={_sawAfkFlag}, afkCleared={_sawAfkCleared}, " +
               $"rig={_rigAppearanceRenderingPassed}, spawnedClientA={_spawnedClientAAppearanceRendered}, " +
-              $"lobbyUpdate={_clientALobbyAppearanceUpdated}, existingRig={_clientAExistingRigUpdated}");
+              $"lobbyUpdate={_clientALobbyAppearanceUpdated}, existingRig={_clientAExistingRigUpdated}, " +
+              $"appearancePanel={_appearancePanelPassed}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }
@@ -739,8 +781,7 @@ public partial class NetworkSmoke : Node
         _clientARigBeforeLobbyUpdate = player?.Avatar as BlockmanRig;
         _spawnedClientAAppearanceRendered = _clientARigBeforeLobbyUpdate != null &&
                                              TryAppearance(clientA, out var appearance) &&
-                                             appearance == SmokeAppearance &&
-                                             RigReflects(_clientARigBeforeLobbyUpdate, SmokeAppearance);
+                                             RigReflects(_clientARigBeforeLobbyUpdate, appearance);
     }
 
     // This must exercise the real renderer: the pure xUnit project intentionally never

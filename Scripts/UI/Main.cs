@@ -20,6 +20,7 @@ public partial class Main : Node
 	private Button _end = null!;
 	private Button _invite = null!;
 	private OptionButton _privacy = null!;
+	private AppearanceCustomizationPanel _appearancePanel = null!;
 	private LineEdit _name = null!;
 	private LineEdit _address = null!;
 	private VBoxContainer _lanList = null!;
@@ -62,6 +63,8 @@ public partial class Main : Node
 	{
 		var canvas = new CanvasLayer();
 		AddChild(canvas);
+		_appearancePanel = new AppearanceCustomizationPanel();
+		AddChild(_appearancePanel);
 		var (menuPanel, menu) = Panel("3D MULTIPLAYER TEMPLATE");
 		_menu = WrapScreen(menuPanel);
 		canvas.AddChild(_menu);
@@ -119,6 +122,7 @@ public partial class Main : Node
 		_end = Button("End Match", SessionManager.Instance.EndMatch);
 		_end.Visible = false;
 		lobby.AddChild(_end);
+		lobby.AddChild(Button("Customize Appearance", _appearancePanel.ShowForLobby));
 		lobby.AddChild(Button("Options", () => ShowOptions(true)));
 		lobby.AddChild(Button("Disconnect", () => SessionManager.Instance.DisconnectSession()));
 
@@ -343,6 +347,7 @@ public partial class Main : Node
 		_status.Text = message;
 		if (state == "menu")
 		{
+			_appearancePanel.Hide();
 			_menu.Visible = true;
 			_lobby.Visible = false;
 			LocalInputContext.Instance.SetBlocked("session_ui", true);
@@ -470,6 +475,7 @@ public partial class Main : Node
 
 	private void OnMatchStarted()
 	{
+		_appearancePanel.Hide();
 		_menu.Visible = false;
 		_lobby.Visible = false;
 		_options.Visible = false;
