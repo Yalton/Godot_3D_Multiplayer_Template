@@ -61,4 +61,30 @@ public sealed class PlayerIdentityTests
         Assert.Equal(appearance, identity.Appearance);
     }
 
+    [Fact]
+    public void RetainsPositionalRecordCompatibilityForAppearance()
+    {
+        var constructor = typeof(PlayerIdentity).GetConstructors()
+            .Single(candidate => candidate.GetParameters().Length == 8);
+        var parameters = constructor.GetParameters();
+
+        Assert.NotNull(typeof(PlayerIdentity).GetMethod("Deconstruct"));
+        Assert.True(typeof(PlayerIdentity).GetProperty(nameof(PlayerIdentity.Appearance))!.CanWrite);
+        Assert.True(parameters[6].IsOptional);
+        Assert.True(parameters[7].IsOptional);
+    }
+
+    [Fact]
+    public void SupportsNamedAppearanceWithExpressionsAndDeconstruction()
+    {
+        var appearance = new AvatarAppearance(CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId,
+            CosmeticCatalogue.BackItemId, CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId);
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, Appearance: appearance);
+        var updated = identity with { Ready = false };
+        var (_, _, _, _, _, ready, _, restoredAppearance) = updated;
+
+        Assert.False(ready);
+        Assert.Equal(appearance, restoredAppearance);
+    }
+
 }

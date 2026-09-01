@@ -4,35 +4,18 @@ using MultiplayerTemplate.Avatar;
 
 namespace MultiplayerTemplate.Network;
 
-public readonly record struct PlayerIdentity
+public readonly record struct PlayerIdentity(
+    long PeerId,
+    string DisplayName,
+    string Platform,
+    long SteamId,
+    bool IsHost,
+    bool Ready,
+    bool Afk = false,
+    AvatarAppearance Appearance = default)
 {
-    public long PeerId { get; }
-    public string DisplayName { get; }
-    public string Platform { get; }
-    public long SteamId { get; }
-    public bool IsHost { get; }
-    public bool Ready { get; }
-    public bool Afk { get; }
-    public AvatarAppearance Appearance { get; }
-
-    public PlayerIdentity(long peerId, string displayName, string platform, long steamId, bool isHost,
-        bool ready, bool afk = false)
-        : this(peerId, displayName, platform, steamId, isHost, ready, afk, AvatarAppearance.Default)
-    {
-    }
-
-    public PlayerIdentity(long peerId, string displayName, string platform, long steamId, bool isHost,
-        bool ready, bool afk, AvatarAppearance appearance)
-    {
-        PeerId = peerId;
-        DisplayName = displayName;
-        Platform = platform;
-        SteamId = steamId;
-        IsHost = isHost;
-        Ready = ready;
-        Afk = afk;
-        Appearance = appearance;
-    }
+    public AvatarAppearance Appearance { get; init; } =
+        Appearance == default ? AvatarAppearance.Default : Appearance;
 
     public bool HasSteamIdentity => Platform == "Steam" && SteamId != 0;
     public string StableSocialKey => HasSteamIdentity
