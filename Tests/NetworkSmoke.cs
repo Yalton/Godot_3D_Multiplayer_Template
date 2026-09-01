@@ -60,6 +60,8 @@ public partial class NetworkSmoke : Node
     private bool _hostAppearanceRegistrationPassed;
     private bool _hostAppearancePlayingRefused;
     private bool _hostAppearanceProbeRequested;
+    private bool _rigAppearanceRenderingPassed;
+    private bool _spawnedRosterAppearanceRendered;
 
     public override void _Ready()
     {
@@ -94,6 +96,7 @@ public partial class NetworkSmoke : Node
         _securityHelpersPassed = CheckSecurityHelpers();
         _identityRoundTripPassed = CheckIdentityRoundTrip();
         _emoteClipsResolved = CheckEmoteClipsResolve();
+        _rigAppearanceRenderingPassed = CheckRigAppearanceRendering();
         if (_role == "server")
         {
             AppearanceProfileService.Instance.SetRequestedAppearance(HostSmokeAppearance);
@@ -214,6 +217,8 @@ public partial class NetworkSmoke : Node
             {
                 _sawPlayerNodes = true;
                 _avatarBuiltHeadless |= player.Avatar != null;
+                if (player.Avatar is BlockmanRig rig && TryAppearance(player.PeerId, out var appearance))
+                    _spawnedRosterAppearanceRendered |= RigReflects(rig, appearance);
             }
     }
 
@@ -463,10 +468,11 @@ public partial class NetworkSmoke : Node
 
     private void FinishServer()
     {
-        var avatarGuard = _sawPlayerNodes && !_avatarBuiltHeadless;
+        var avatarGuard = _sawPlayerNodes && _avatarBuiltHeadless;
         var success = _sawThreePeers && _sawPlaying && _securityHelpersPassed &&
                       _sawChat && _sawPhysicsInteraction && _identityRoundTripPassed && avatarGuard &&
                       _appearanceRegistrationPassed && _hostAppearanceRegistrationPassed && _hostAppearancePlayingRefused &&
+                      _rigAppearanceRenderingPassed && _spawnedRosterAppearanceRendered &&
                       SessionManager.Instance.Players.Count == 1;
         GD.Print(success
             ? "SMOKE SERVER PASS (3 peers, synchronized load, playing)"
@@ -479,11 +485,12 @@ public partial class NetworkSmoke : Node
     private void FinishClient()
     {
         var loadedScene = MatchSceneCoordinator.Instance.LoadedSceneCount == 1;
-        var avatarGuard = _sawPlayerNodes && !_avatarBuiltHeadless;
+        var avatarGuard = _sawPlayerNodes && _avatarBuiltHeadless;
         var success = _sawThreePeers && _sawPlaying && loadedScene &&
                       _sawChat && _sawPhysicsInteraction &&
                       _clockSynchronized && _qualitySampled && _identityRoundTripPassed &&
                       avatarGuard && _sawAfkFlag && _sawAfkCleared && _appearanceRegistrationPassed &&
+                      _rigAppearanceRenderingPassed && _spawnedRosterAppearanceRendered &&
                       (_clientName != "ClientA" || (_appearanceInvalidRefused && _appearancePlayingRefused &&
                                                      _appearancePlayingRequestedInPlaying));
         GD.Print(success
@@ -522,11 +529,12 @@ public partial class NetworkSmoke : Node
     {
         var voiceDisabled = !PositionalVoiceChat.Instance.ClientCaptureEnabled;
         var chatDisabled = !TextChatManager.Instance.ClientUiEnabled;
-        var success = SessionManager.Instance.IsDedicatedServer && voiceDisabled && chatDisabled;
+        var nullRig = AvatarFactory.Build(1) == null;
+        var success = SessionManager.Instance.IsDedicatedServer && voiceDisabled && chatDisabled && nullRig;
         GD.Print(success
             ? "SMOKE DEDICATED PASS (client-only services disabled)"
             : $"SMOKE DEDICATED FAIL dedicated={SessionManager.Instance.IsDedicatedServer}, " +
-              $"voice={voiceDisabled}, chat={chatDisabled}");
+              $"voice={voiceDisabled}, chat={chatDisabled}, nullRig={nullRig}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }
@@ -685,6 +693,50 @@ public partial class NetworkSmoke : Node
                partialIdentity.Appearance == new AvatarAppearance(AvatarAppearance.Default.BodyColorId,
                    CosmeticCatalogue.HeadItemId, CosmeticCatalogue.None, CosmeticCatalogue.None,
                    CosmeticCatalogue.None);
+    }
+
+    // This must exercise the real renderer: the pure xUnit project intentionally never
+    // constructs Godot nodes. The second application represents a changed roster entry
+    // landing on a rig which was already ready, while the invalid values prove the rig's
+    // public rendering boundary cannot create undefined cosmetics.
+    private bool CheckRigAppearanceRendering()
+    {
+        var rig = new BlockmanRig { Name = "SmokeAppearanceRig" };
+        AddChild(rig);
+        rig.ApplyAppearance(SmokeAppearance);
+        var spawnedAppearance = RigReflects(rig, SmokeAppearance);
+        var rosterUpdate = new AvatarAppearance(CosmeticCatalogue.RedBodyId, CosmeticCatalogue.None,
+            CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None);
+        rig.ApplyAppearance(rosterUpdate);
+        var existingRigUpdate = RigReflects(rig, rosterUpdate);
+        rig.ApplyAppearance(new AvatarAppearance(999, 999, 999, 999, 999));
+        var invalidFallback = RigReflects(rig, AvatarAppearance.Default);
+        rig.QueueFree();
+        return spawnedAppearance && existingRigUpdate && invalidFallback;
+    }
+
+    private static bool RigReflects(BlockmanRig rig, AvatarAppearance requested)
+    {
+        var appearance = CosmeticCatalogue.Normalize(requested);
+        if (rig.GetAttachment(AvatarSlot.Head).GetChildCount() != (appearance.HeadId == CosmeticCatalogue.None ? 0 : 1) ||
+            rig.GetAttachment(AvatarSlot.Back).GetChildCount() != (appearance.BackId == CosmeticCatalogue.None ? 0 : 1) ||
+            rig.GetAttachment(AvatarSlot.Hips).GetChildCount() != (appearance.HipsId == CosmeticCatalogue.None ? 0 : 1) ||
+            rig.GetAttachment(AvatarSlot.HandLeft).GetChildCount() != (appearance.HandId == CosmeticCatalogue.None ? 0 : 1) ||
+            rig.GetAttachment(AvatarSlot.HandRight).GetChildCount() != (appearance.HandId == CosmeticCatalogue.None ? 0 : 1))
+            return false;
+
+        var body = CosmeticCatalogue.All.First(entry =>
+            entry.Slot == CosmeticSlot.BodyColor && entry.Id == appearance.BodyColorId);
+        var expectedColor = new Color(body.Red / 255f, body.Green / 255f, body.Blue / 255f);
+        var sawBodyBox = false;
+        foreach (var box in rig.FindChildren("*", "MeshInstance3D", true, false))
+            if (box is MeshInstance3D mesh && mesh.GetParent()?.Name.ToString().StartsWith("Box_") == true)
+            {
+                sawBodyBox = true;
+                if (mesh.MaterialOverride is not StandardMaterial3D material ||
+                    !material.AlbedoColor.IsEqualApprox(expectedColor)) return false;
+            }
+        return sawBodyBox;
     }
 
     private static readonly AvatarAppearance SmokeAppearance = new(

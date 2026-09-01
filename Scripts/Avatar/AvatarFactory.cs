@@ -1,5 +1,6 @@
 using Godot;
 using DebugLoggerKit;
+using MultiplayerTemplate.Network;
 
 namespace MultiplayerTemplate.Avatar;
 
@@ -14,12 +15,11 @@ public static class AvatarFactory
 
     public static AvatarRig? Build(long peerId)
     {
-        // Servers need collision and movement, not boxes. BoneAttachment3D never
-        // participates in physics, so simulation is identical without a rig.
-        if (DisplayServer.GetName() == "headless") return null;
+        // Dedicated servers need collision and movement, not boxes. BoneAttachment3D
+        // never participates in physics, so simulation is identical without a rig.
+        if (DisplayServer.GetName() == "headless" && SessionManager.Instance.IsDedicatedServer) return null;
         var rig = BuildConfigured() ?? new BlockmanRig();
         rig.Name = "Avatar";
-        rig.Ready += () => rig.ApplyAppearance(AvatarAppearance.Default);
         return rig;
     }
 
