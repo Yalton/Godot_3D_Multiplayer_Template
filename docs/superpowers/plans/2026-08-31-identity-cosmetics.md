@@ -23,13 +23,14 @@
 
 ### Task 1: Define pure appearance and catalogue policy
 
-**Files:** Create `Scripts/Avatar/AvatarAppearance.cs`, `Scripts/Avatar/CosmeticCatalogue.cs`, and `MultiplayerTemplate.Tests/CosmeticCatalogueTests.cs`; modify `Scripts/Avatar/AvatarRig.cs`.
+**Files:** Create `Scripts/Avatar/AvatarAppearance.cs`, `Scripts/Avatar/CosmeticCatalogue.cs`, and `MultiplayerTemplate.Tests/CosmeticCatalogueTests.cs`; modify `Scripts/Avatar/AvatarRig.cs`, `Scripts/Avatar/BlockmanRig.cs`, and `Scripts/Avatar/AvatarFactory.cs`.
 
 **Produces:** `AvatarAppearance(int BodyColorId, int HeadId, int BackId, int HipsId, int HandId)`, `AvatarAppearance.Default`, `CosmeticSlot`, and `CosmeticCatalogue.Normalize(AvatarAppearance)`.
 
 - [ ] Write failing tests that assert an unknown ID and a hand ID supplied to the head slot normalize to defaults, while valid IDs survive unchanged.
 - [ ] Run `dotnet test MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj --filter FullyQualifiedName~CosmeticCatalogueTests`; confirm the missing types/API cause the failure.
-- [ ] Implement immutable integer-only IDs and a `CosmeticCatalogue` with per-slot constants, `none` as ID zero, `IsValid(CosmeticSlot, int)`, and `Normalize`. Do not import `Godot`.
+- [ ] Implement immutable integer-only IDs and a `CosmeticCatalogue` with globally unique nonzero IDs, `none` as ID zero, pure `CosmeticDefinition` display/colour-byte metadata, `IsValid(CosmeticSlot, int)`, `DefinitionsFor(CosmeticSlot)`, and `Normalize`. Do not import `Godot`.
+- [ ] Adapt `BlockmanRig` to map the pure body-colour bytes to `Godot.Color` at its rendering boundary, and change `AvatarFactory` to apply `AvatarAppearance.Default`; do not create cosmetic meshes yet.
 - [ ] Re-run the focused test and full unit suite. Mutate one `IsValid` branch and prove the cross-slot test fails, then restore it.
 - [ ] Commit: `feat: define cosmetic appearance policy`.
 

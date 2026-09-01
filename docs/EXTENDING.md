@@ -79,6 +79,31 @@ public partial class MyRig : AvatarRig
 }
 ```
 
+### Appearance customization
+
+Each roster entry carries the canonical appearance as five integer keys:
+`appearance_body_color`, `appearance_head`, `appearance_back`, `appearance_hips`, and
+`appearance_hand`. These are catalogue IDs, not client-authored meshes or materials. Missing
+or malformed values resolve to the default appearance when a roster is read.
+
+A client may request its own appearance only while the session is in `Lobby`. The request sends
+the five IDs as primitives; the server derives the sender from the RPC, verifies that sender is
+registered, rate-limits the request, validates every ID against `CosmeticCatalogue`, and updates
+only that sender's roster entry before broadcasting the roster. Invalid IDs and requests outside
+the lobby leave the canonical roster unchanged. Do not add a client-side roster mutation or a
+peer ID to this request: appearance follows the same server-authoritative pattern as AFK.
+
+`BlockmanRig.ApplyAppearance` is deliberately procedural: it recolours the body and creates the
+selected primitive cosmetic nodes under its attachment markers. It is not an asset-loading path.
+Headless servers still build no avatar rig, so neither appearance meshes nor marker nodes exist
+there and simulation remains independent of cosmetic rendering.
+
+If you replace the rig, `ApplyAppearance(AvatarAppearance)` is your rendering responsibility.
+`GetAttachment` must return stable `Node3D` markers for `AvatarSlot.Head`, `Back`, `Hips`,
+`HandLeft`, and `HandRight`; the built-in rig uses those markers for its procedural cosmetics.
+A custom rig may render its catalogue IDs differently, but it must own the mapping and preserve
+the no-physics requirement described above.
+
 ## Replace the emotes and quick-chat lines
 
 Emotes are looked up by id in `Scripts/Avatar/EmoteCatalogue.cs`; the lookup is also the

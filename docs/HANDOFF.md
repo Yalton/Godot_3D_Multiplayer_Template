@@ -27,7 +27,7 @@ phases, in dependency order:
 | --- | --- | --- |
 | P1 — Avatar & Presence | swappable character rig, locomotion animation, third-person toggle, Tab player list, speaking indicator, AFK, host kick | **shipped** |
 | P2a — Expression | radial wheel, emotes, quick chat | **shipped** |
-| P2b — Identity | `AvatarAppearance` cosmetics, cosmetic catalogue, customization screen, profile persistence | **next** |
+| P2b — Identity | `AvatarAppearance` cosmetics, cosmetic catalogue, customization screen, profile persistence | **shipped** |
 | P3 — Voice overhaul | Opus codec, voice activity detection, per-player volume mixer, proximity/global channels, mic settings UI | planned |
 | P4 — Social physics | player push/ragdoll, carrying players, prop spawner | planned |
 | P5 — World toys | ping markers, spray tags, boombox, photo mode, Steam rich presence | planned |
@@ -173,3 +173,31 @@ Do not repeat these.
   `ResetSync` theory on top of it. Both wrong. Take the clean baseline first.
 - I judged the `IsSceneReady` readiness race "survivable" when its only symptom was log noise.
   It later failed the gate one run in three. Fixed in `cacde6c`.
+
+## P2b resume — 2026-08-31
+
+Branch: `feature/identity-cosmetics`. Approved docs are the P2b spec and plan in
+`docs/superpowers/specs/2026-08-31-identity-cosmetics-design.md` and
+`docs/superpowers/plans/2026-08-31-identity-cosmetics.md`.
+
+Completed: `eda6410` centralizes reject throttling; `635eca5` completes/reviews pure appearance
+policy; `4f38c09` implements roster appearance serialization and local profile persistence;
+`c020021` registers and validates canonical lobby appearance; `16b3463` renders roster-driven
+procedural cosmetics; and `93a0d39` adds the lobby customization panel. P2b is **shipped**.
+`NetworkBuildInfo.ProtocolVersion` is **9**, bumped for the registration RPC signature.
+
+Intentional dirt: the P2b plan is modified with a preflight correction: Task 1 owns minimal
+rig/factory compatibility, nonzero IDs are globally unique, and definitions have pure metadata.
+Preserve and commit that plan amendment.
+
+The finished contract is five `appearance_*` roster keys. Registration and lobby updates use five
+primitive IDs, but the server alone validates, normalizes, and updates the sender's canonical
+roster entry. `BlockmanRig` renders cosmetics procedurally; headless servers build no rig. Custom
+rigs own `ApplyAppearance` and the `AvatarSlot` markers they return from `GetAttachment`.
+
+The local profile remains `user://appearance_profile.cfg`. Codec tests use pure .NET dictionaries
+because Godot dictionaries crash standalone xUnit; engine/RPC behavior belongs in
+`Tests/NetworkSmoke.cs`.
+
+Use the physical path for all-tests if logical `/home/...` gets the known Runtime 10 test-host
+error: `bash -c 'cd -P /data/fast/Projects/Tech/Games/Godot/3DMultiplayerTemplate; exec bash Tests/run_all_tests.sh'`.
