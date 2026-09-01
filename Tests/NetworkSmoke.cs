@@ -71,6 +71,10 @@ public partial class NetworkSmoke : Node
     private bool _appearancePanelTeardownPassed;
     private bool _appearancePanelProbeStarted;
     private AppearanceCustomizationPanel? _appearancePanel;
+    private bool _appearanceSecurityProbeStarted;
+    private bool _appearanceCrossSlotRefused;
+    private bool _appearanceRateLimited;
+    private bool _profilePersistencePassed;
 
     public override void _Ready()
     {
@@ -105,6 +109,7 @@ public partial class NetworkSmoke : Node
         };
         _securityHelpersPassed = CheckSecurityHelpers();
         _identityRoundTripPassed = CheckIdentityRoundTrip();
+        _profilePersistencePassed = CheckAppearanceProfilePersistence();
         _emoteClipsResolved = CheckEmoteClipsResolve();
         _rigAppearanceRenderingPassed = CheckRigAppearanceRendering();
         if (_role == "server")
@@ -389,6 +394,12 @@ public partial class NetworkSmoke : Node
             _appearancePanelProbeStarted = true;
             _ = DriveAppearancePanelProbe();
         }
+        if (_role == "client" && _clientName == "ClientB" && players.Count == 3 && !_appearanceSecurityProbeStarted &&
+            SessionManager.Instance.State == SessionManager.SessionState.Lobby)
+        {
+            _appearanceSecurityProbeStarted = true;
+            _ = DriveAppearanceSecurityProbes();
+        }
         RequestPlayingAppearanceProbeIfReady();
         if (_role == "kick-server" && players.Count == 3 && !_startedKickProbe && Multiplayer.IsServer())
         {
@@ -455,6 +466,33 @@ public partial class NetworkSmoke : Node
         _appearanceInvalidRefused = TryMyAppearance(out var appearance) && appearance == LobbyUpdatedAppearance;
         _appearancePlayingRequestPending = true;
         RequestPlayingAppearanceProbeIfReady();
+    }
+
+    // ClientB starts with a fresh RequestAppearanceRpc budget. A cross-slot id must leave the
+    // canonical roster untouched, then the seventh request in this five-second burst must be
+    // refused. The expected fifth valid update accounts for the rejected cross-slot request
+    // consuming the first of the six permitted slots.
+    private async Task DriveAppearanceSecurityProbes()
+    {
+        if (!TryMyAppearance(out var before)) return;
+        SessionManager.Instance.RequestAppearance(new AvatarAppearance(CosmeticCatalogue.RedBodyId,
+            CosmeticCatalogue.BackItemId, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None));
+        await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
+        _appearanceCrossSlotRefused = TryMyAppearance(out var afterCrossSlot) && afterCrossSlot == before;
+
+        var burst = new[]
+        {
+            new AvatarAppearance(CosmeticCatalogue.RedBodyId, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None),
+            new AvatarAppearance(CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None),
+            new AvatarAppearance(CosmeticCatalogue.BlueBodyId, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None),
+            new AvatarAppearance(CosmeticCatalogue.RedBodyId, CosmeticCatalogue.HeadItemId, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None),
+            new AvatarAppearance(CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None),
+            new AvatarAppearance(CosmeticCatalogue.BlueBodyId, CosmeticCatalogue.HeadItemId, CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None)
+        };
+        foreach (var appearance in burst) SessionManager.Instance.RequestAppearance(appearance);
+        await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
+        _appearanceRateLimited = _appearanceCrossSlotRefused && TryMyAppearance(out var afterBurst) &&
+                                 afterBurst == burst[4];
     }
 
     // This is deliberately an engine-level contract: it proves the actual modal owns a
@@ -531,6 +569,7 @@ public partial class NetworkSmoke : Node
         var success = _sawThreePeers && _sawPlaying && _securityHelpersPassed &&
                       _sawChat && _sawPhysicsInteraction && _identityRoundTripPassed && avatarGuard &&
                       _appearanceRegistrationPassed && _hostAppearanceRegistrationPassed && _hostAppearancePlayingRefused &&
+                      _profilePersistencePassed &&
                       _rigAppearanceRenderingPassed &&
                       SessionManager.Instance.Players.Count == 1;
         GD.Print(success
@@ -549,12 +588,14 @@ public partial class NetworkSmoke : Node
                       _sawChat && _sawPhysicsInteraction &&
                       _clockSynchronized && _qualitySampled && _identityRoundTripPassed &&
                       avatarGuard && _sawAfkFlag && _sawAfkCleared && _appearanceRegistrationPassed &&
+                      _profilePersistencePassed &&
                       _rigAppearanceRenderingPassed &&
                       (_clientName != "ClientA" || (_spawnedClientAAppearanceRendered &&
                                                      _clientALobbyAppearanceUpdated && _clientAExistingRigUpdated &&
                                                      _appearancePanelOpenSelectionPassed && _appearancePanelTeardownPassed)) &&
                       (_clientName != "ClientA" || (_appearanceInvalidRefused && _appearancePlayingRefused &&
-                                                     _appearancePlayingRequestedInPlaying));
+                                                     _appearancePlayingRequestedInPlaying)) &&
+                      (_clientName != "ClientB" || (_appearanceCrossSlotRefused && _appearanceRateLimited));
         GD.Print(success
             ? $"SMOKE CLIENT PASS ({_clientName}, synchronized scene and clock)"
             : $"SMOKE CLIENT FAIL name={_clientName}, roster={SessionManager.Instance.Players}, " +
@@ -564,7 +605,9 @@ public partial class NetworkSmoke : Node
               $"rig={_rigAppearanceRenderingPassed}, spawnedClientA={_spawnedClientAAppearanceRendered}, " +
               $"lobbyUpdate={_clientALobbyAppearanceUpdated}, existingRig={_clientAExistingRigUpdated}, " +
               $"appearancePanelOpenSelection={_appearancePanelOpenSelectionPassed}, " +
-              $"appearancePanelTeardown={_appearancePanelTeardownPassed}");
+              $"appearancePanelTeardown={_appearancePanelTeardownPassed}, " +
+              $"profilePersistence={_profilePersistencePassed}, crossSlot={_appearanceCrossSlotRefused}, " +
+              $"rateLimited={_appearanceRateLimited}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }
@@ -759,6 +802,42 @@ public partial class NetworkSmoke : Node
                partialIdentity.Appearance == new AvatarAppearance(AvatarAppearance.Default.BodyColorId,
                    CosmeticCatalogue.HeadItemId, CosmeticCatalogue.None, CosmeticCatalogue.None,
                    CosmeticCatalogue.None);
+    }
+
+    // This deliberately uses Godot ConfigFile rather than the engine-free codec tests. It
+    // writes a unique user path, recreates the service, and verifies both valid reload and
+    // malformed persisted values normalize through the service's real load/save boundary.
+    private static bool CheckAppearanceProfilePersistence()
+    {
+        var profilePath = $"user://network_smoke_appearance_{OS.GetProcessId()}.cfg";
+        var absolutePath = ProjectSettings.GlobalizePath(profilePath);
+        DirAccess.RemoveAbsolute(absolutePath);
+        try
+        {
+            var saved = new AvatarAppearance(CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId,
+                CosmeticCatalogue.BackItemId, CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId);
+            var writer = new AppearanceProfileService();
+            writer.LoadProfile(profilePath);
+            writer.SetRequestedAppearance(saved);
+            var reader = new AppearanceProfileService();
+            reader.LoadProfile(profilePath);
+            var persisted = reader.RequestedAppearance == saved;
+
+            var malformed = new ConfigFile();
+            malformed.SetValue("appearance", AppearanceProfileCodec.BodyColorKey, 999);
+            malformed.SetValue("appearance", AppearanceProfileCodec.HeadKey, CosmeticCatalogue.BackItemId);
+            malformed.SetValue("appearance", AppearanceProfileCodec.BackKey, -1);
+            malformed.SetValue("appearance", AppearanceProfileCodec.HipsKey, 999);
+            malformed.SetValue("appearance", AppearanceProfileCodec.HandKey, 999);
+            if (malformed.Save(profilePath) != Error.Ok) return false;
+            var malformedReader = new AppearanceProfileService();
+            malformedReader.LoadProfile(profilePath);
+            return persisted && malformedReader.RequestedAppearance == AvatarAppearance.Default;
+        }
+        finally
+        {
+            DirAccess.RemoveAbsolute(absolutePath);
+        }
     }
 
     private void PrepareClientARigForLobbyUpdate(long clientA)

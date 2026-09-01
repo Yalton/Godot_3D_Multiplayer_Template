@@ -9,14 +9,22 @@ public partial class AppearanceProfileService : Node
     public static AppearanceProfileService Instance { get; private set; } = null!;
     public AvatarAppearance RequestedAppearance { get; private set; } = AvatarAppearance.Default;
 
-    private const string ProfilePath = "user://appearance_profile.cfg";
+    private const string DefaultProfilePath = "user://appearance_profile.cfg";
     private const string Section = "appearance";
     private readonly ConfigFile _config = new();
+    private string _profilePath = DefaultProfilePath;
 
     public override void _Ready()
     {
         Instance = this;
-        if (_config.Load(ProfilePath) != Error.Ok) _config.Clear();
+        LoadProfile(DefaultProfilePath);
+    }
+
+    /// <summary>Loads one profile path; exposed so engine smoke can recreate the real ConfigFile boundary.</summary>
+    public void LoadProfile(string profilePath)
+    {
+        _profilePath = profilePath;
+        if (_config.Load(_profilePath) != Error.Ok) _config.Clear();
         var values = new Dictionary<string, int>
         {
             [AppearanceProfileCodec.BodyColorKey] = Read(AppearanceProfileCodec.BodyColorKey, AvatarAppearance.Default.BodyColorId),
@@ -40,6 +48,6 @@ public partial class AppearanceProfileService : Node
     private void Save(AvatarAppearance appearance)
     {
         foreach (var pair in AppearanceProfileCodec.ToDictionary(appearance)) _config.SetValue(Section, pair.Key, pair.Value);
-        _config.Save(ProfilePath);
+        _config.Save(_profilePath);
     }
 }
