@@ -42,7 +42,7 @@ replicated to every peer over the roster RPC. Any new state you add that affects
 outcomes must follow the AFK pattern (server-authoritative, replicated), never the locomotion
 pattern (locally derived), or clients can disagree on what happened.
 
-A rig is never built on a headless server (`AvatarFactory.Build` returns `null` there).
+A rig is never built on a headless dedicated server (`AvatarFactory.Build` returns `null` there).
 `BoneAttachment3D` and the animation nodes it drives never participate in physics, so
 simulation is identical with or without a rig.
 
@@ -70,11 +70,23 @@ A minimal subclass looks like:
 ```csharp
 public partial class MyRig : AvatarRig
 {
+    private readonly System.Collections.Generic.Dictionary<AvatarSlot, Node3D> _attachments = new();
+
+    public override void _Ready()
+    {
+        foreach (AvatarSlot slot in System.Enum.GetValues<AvatarSlot>())
+        {
+            var marker = new Node3D { Name = $"Slot_{slot}" };
+            AddChild(marker);
+            _attachments[slot] = marker;
+        }
+    }
+
     public override void SetLocomotion(LocomotionResult state) { }
     public override void PlayAction(string clip) { }
     public override void StopAction() { }
     public override bool ActionPlaying => false;
-    public override Node3D GetAttachment(AvatarSlot slot) => this;
+    public override Node3D GetAttachment(AvatarSlot slot) => _attachments[slot];
     public override void ApplyAppearance(AvatarAppearance appearance) { }
 }
 ```
@@ -95,8 +107,8 @@ peer ID to this request: appearance follows the same server-authoritative patter
 
 `BlockmanRig.ApplyAppearance` is deliberately procedural: it recolours the body and creates the
 selected primitive cosmetic nodes under its attachment markers. It is not an asset-loading path.
-Headless servers still build no avatar rig, so neither appearance meshes nor marker nodes exist
-there and simulation remains independent of cosmetic rendering.
+A headless dedicated server still builds no avatar rig, so neither appearance meshes nor marker
+nodes exist there and simulation remains independent of cosmetic rendering.
 
 If you replace the rig, `ApplyAppearance(AvatarAppearance)` is your rendering responsibility.
 `GetAttachment` must return stable `Node3D` markers for `AvatarSlot.Head`, `Back`, `Hips`,

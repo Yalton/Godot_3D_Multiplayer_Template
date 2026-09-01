@@ -37,9 +37,9 @@ spec for a phase before its plan; the plan argues from the spec.
 
 **One decision is already made for P2b and should not be relitigated:** appearance replicates
 by extending `PlayerIdentity` and riding the existing roster, exactly as the `Afk` flag does.
-It is recorded in the P2a spec. The seams P1 and P2a left for it are `AvatarRig.ApplyAppearance`,
-`AvatarAppearance` (currently carrying only `BodyColor`), and the `AvatarSlot` attachment
-markers — all shipped and currently unused.
+It is recorded in the P2a spec. P2b ships the five-ID `AvatarAppearance` on that roster;
+`AvatarRig.ApplyAppearance` renders it, and `AvatarSlot` attachment markers mount its
+procedural cosmetics.
 
 ## Rules this codebase enforces
 
@@ -192,8 +192,9 @@ Preserve and commit that plan amendment.
 
 The finished contract is five `appearance_*` roster keys. Registration and lobby updates use five
 primitive IDs, but the server alone validates, normalizes, and updates the sender's canonical
-roster entry. `BlockmanRig` renders cosmetics procedurally; headless servers build no rig. Custom
-rigs own `ApplyAppearance` and the `AvatarSlot` markers they return from `GetAttachment`.
+roster entry. `BlockmanRig` renders cosmetics procedurally; a headless dedicated server builds
+no rig. Custom rigs own `ApplyAppearance` and the `AvatarSlot` markers they return from
+`GetAttachment`.
 
 The local profile remains `user://appearance_profile.cfg`. Codec tests use pure .NET dictionaries
 because Godot dictionaries crash standalone xUnit; engine/RPC behavior belongs in

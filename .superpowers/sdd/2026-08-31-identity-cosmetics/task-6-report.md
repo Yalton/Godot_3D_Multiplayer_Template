@@ -58,3 +58,27 @@ exit 0
 
 None. The smoke harness remains timing-sensitive under concurrent machine load as documented in
 the handoff, but this clean run completed successfully.
+
+## Fix round 1 — documentation review
+
+- Replaced the stale pre-P2b seam note in `docs/HANDOFF.md` with the shipped five-ID roster,
+  `ApplyAppearance`, and procedural-marker contract.
+- Corrected no-rig wording to **headless dedicated server** in `docs/EXTENDING.md` and
+  `docs/HANDOFF.md`, matching `AvatarFactory.Build`'s `headless && IsDedicatedServer` guard.
+- Replaced the minimal custom-rig example's one-root attachment return with five stable
+  `AvatarSlot` marker nodes.
+
+Verification for this documentation-only fix:
+
+```text
+$ git diff --check
+exit 0
+
+$ rg -n "headless dedicated server|AvatarAppearance|GetAttachment" \\
+    docs/EXTENDING.md docs/HANDOFF.md Scripts/Avatar/AvatarFactory.cs Scripts/Avatar/AvatarRig.cs
+Documentation names the dedicated-server guard and all custom-rig attachment markers; source
+confirms `AvatarFactory.Build` returns null only for `headless && IsDedicatedServer`.
+```
+
+Self-review: inspected the final documentation diff against `AvatarFactory.Build`,
+`AvatarRig.GetAttachment`, and the P2b handoff section. No code or behavior changed.
