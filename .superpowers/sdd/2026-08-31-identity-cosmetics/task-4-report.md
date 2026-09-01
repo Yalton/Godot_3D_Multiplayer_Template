@@ -112,3 +112,56 @@ MULTIPLAYER HARNESS PASS
 - The accepted Lobby update is verified from canonical roster data and against the same pre-existing `GameWorld` rig; it uses the real `GameWorld.OnRosterChanged` subscription.
 - `RigReflects` now checks direct marker children for exact `Cosmetic_<slot>_<id>` names, `MeshInstance3D`/`BoxMesh` primitives, expected deterministic sizes, and catalogue colors/materials, in addition to body and count checks.
 - Dedicated null-rig proof remains present. No known remaining concern.
+
+## Fix Round 2
+
+### RED evidence
+
+The prior spawn check was deliberately changed to require `SmokeAppearance` only after `Playing`; this demonstrated the ordering bug because the accepted Lobby update had already replaced ClientA's canonical appearance:
+
+```text
+$ timeout 30 bash Tests/run_multiplayer_smoke.sh
+SMOKE CLIENT FAIL name=ClientA, ... rig=True, spawnedClientA=False,
+lobbyUpdate=True, existingRig=True
+SMOKE CLIENT FAIL name=ClientB, ... spawnedClientA=False
+SMOKE SERVER FAIL ...
+MULTIPLAYER HARNESS FAIL
+```
+
+### GREEN evidence
+
+The `SmokeAppearance` check now runs immediately after the ClientA `GameWorld` fixture spawns its rig, while ClientA's canonical roster data is still the initial non-none value. Only then does the accepted Lobby update execute; the same held rig is separately checked after `RosterChanged`.
+
+```text
+$ dotnet build MultiplayerTemplate.csproj --no-restore
+Build succeeded. 0 Warning(s), 0 Error(s)
+
+$ dotnet test MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj --no-restore
+Passed!  - Failed:     0, Passed:   128, Skipped:     0, Total:   128,
+Duration: 35 ms - MultiplayerTemplate.Tests.dll (net8.0)
+
+$ bash Tests/run_multiplayer_smoke.sh
+SMOKE CLIENT PASS (ClientA, synchronized scene and clock)
+SMOKE CLIENT PASS (ClientB, synchronized scene and clock)
+SMOKE INCOMPATIBLE PASS (rejected before registration)
+SMOKE SERVER PASS (3 peers, synchronized load, playing)
+SMOKE HOST LOSS PASS (client returned offline)
+SMOKE DEDICATED PASS (client-only services disabled)
+SMOKE KICK ROGUE PASS (...)
+SMOKE KICK SERVER PASS (...)
+SMOKE KICK TARGET PASS (...)
+SMOKE EMOTE A PASS (...)
+SMOKE EMOTE B PASS (...)
+SMOKE EMOTE LATE PASS (...)
+SMOKE EMOTE SERVER PASS (...)
+MULTIPLAYER HARNESS PASS
+```
+
+`git diff --check` passed.
+
+### Files and self-review
+
+- Modified `Tests/NetworkSmoke.cs`; appended this report.
+- The spawn assertion no longer reads the roster after it has changed and cannot pass for the red/no-cosmetic Lobby update.
+- Existing-rig `RosterChanged` proof remains distinct and still verifies the accepted canonical update.
+- No production behavior changed and the dedicated null-rig assertion remains covered. No known remaining concern.

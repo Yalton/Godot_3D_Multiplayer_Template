@@ -221,10 +221,6 @@ public partial class NetworkSmoke : Node
             {
                 _sawPlayerNodes = true;
                 _avatarBuiltHeadless |= player.Avatar != null;
-                var clientA = ResolvePeerIdByName("ClientA");
-                if (player.PeerId == clientA && player.Avatar is BlockmanRig rig &&
-                    TryAppearance(clientA, out var appearance))
-                    _spawnedClientAAppearanceRendered |= RigReflects(rig, appearance);
             }
     }
 
@@ -484,7 +480,7 @@ public partial class NetworkSmoke : Node
         var success = _sawThreePeers && _sawPlaying && _securityHelpersPassed &&
                       _sawChat && _sawPhysicsInteraction && _identityRoundTripPassed && avatarGuard &&
                       _appearanceRegistrationPassed && _hostAppearanceRegistrationPassed && _hostAppearancePlayingRefused &&
-                      _rigAppearanceRenderingPassed && _spawnedClientAAppearanceRendered &&
+                      _rigAppearanceRenderingPassed &&
                       SessionManager.Instance.Players.Count == 1;
         GD.Print(success
             ? "SMOKE SERVER PASS (3 peers, synchronized load, playing)"
@@ -502,8 +498,9 @@ public partial class NetworkSmoke : Node
                       _sawChat && _sawPhysicsInteraction &&
                       _clockSynchronized && _qualitySampled && _identityRoundTripPassed &&
                       avatarGuard && _sawAfkFlag && _sawAfkCleared && _appearanceRegistrationPassed &&
-                      _rigAppearanceRenderingPassed && _spawnedClientAAppearanceRendered &&
-                      (_clientName != "ClientA" || (_clientALobbyAppearanceUpdated && _clientAExistingRigUpdated)) &&
+                      _rigAppearanceRenderingPassed &&
+                      (_clientName != "ClientA" || (_spawnedClientAAppearanceRendered &&
+                                                     _clientALobbyAppearanceUpdated && _clientAExistingRigUpdated)) &&
                       (_clientName != "ClientA" || (_appearanceInvalidRefused && _appearancePlayingRefused &&
                                                      _appearancePlayingRequestedInPlaying));
         GD.Print(success
@@ -740,6 +737,10 @@ public partial class NetworkSmoke : Node
             player.SetProcessUnhandledInput(false);
         }
         _clientARigBeforeLobbyUpdate = player?.Avatar as BlockmanRig;
+        _spawnedClientAAppearanceRendered = _clientARigBeforeLobbyUpdate != null &&
+                                             TryAppearance(clientA, out var appearance) &&
+                                             appearance == SmokeAppearance &&
+                                             RigReflects(_clientARigBeforeLobbyUpdate, SmokeAppearance);
     }
 
     // This must exercise the real renderer: the pure xUnit project intentionally never
