@@ -40,4 +40,5 @@ public sealed class PlayerIdentityTests
     {
         Assert.True(new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true).Afk);
     }
+
 }
