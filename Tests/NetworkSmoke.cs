@@ -61,7 +61,11 @@ public partial class NetworkSmoke : Node
     private bool _hostAppearancePlayingRefused;
     private bool _hostAppearanceProbeRequested;
     private bool _rigAppearanceRenderingPassed;
-    private bool _spawnedRosterAppearanceRendered;
+    private bool _spawnedClientAAppearanceRendered;
+    private bool _clientALobbyAppearanceUpdated;
+    private bool _clientAExistingRigUpdated;
+    private BlockmanRig? _clientARigBeforeLobbyUpdate;
+    private GameWorld? _lobbyAppearanceWorld;
 
     public override void _Ready()
     {
@@ -217,8 +221,10 @@ public partial class NetworkSmoke : Node
             {
                 _sawPlayerNodes = true;
                 _avatarBuiltHeadless |= player.Avatar != null;
-                if (player.Avatar is BlockmanRig rig && TryAppearance(player.PeerId, out var appearance))
-                    _spawnedRosterAppearanceRendered |= RigReflects(rig, appearance);
+                var clientA = ResolvePeerIdByName("ClientA");
+                if (player.PeerId == clientA && player.Avatar is BlockmanRig rig &&
+                    TryAppearance(clientA, out var appearance))
+                    _spawnedClientAAppearanceRendered |= RigReflects(rig, appearance);
             }
     }
 
@@ -379,6 +385,7 @@ public partial class NetworkSmoke : Node
             SessionManager.Instance.State == SessionManager.SessionState.Lobby)
         {
             _appearanceUpdateRequested = true;
+            PrepareClientARigForLobbyUpdate(clientA);
             _ = DriveAppearanceProbes();
         }
         RequestPlayingAppearanceProbeIfReady();
@@ -436,9 +443,14 @@ public partial class NetworkSmoke : Node
 
     private async Task DriveAppearanceProbes()
     {
+        SessionManager.Instance.RequestAppearance(LobbyUpdatedAppearance);
+        await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
+        _clientALobbyAppearanceUpdated = TryMyAppearance(out var updated) && updated == LobbyUpdatedAppearance;
+        _clientAExistingRigUpdated = _clientARigBeforeLobbyUpdate != null &&
+                                     RigReflects(_clientARigBeforeLobbyUpdate, LobbyUpdatedAppearance);
         SessionManager.Instance.RequestAppearance(new AvatarAppearance(999, 999, 999, 999, 999));
         await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
-        _appearanceInvalidRefused = TryMyAppearance(out var appearance) && appearance == SmokeAppearance;
+        _appearanceInvalidRefused = TryMyAppearance(out var appearance) && appearance == LobbyUpdatedAppearance;
         _appearancePlayingRequestPending = true;
         RequestPlayingAppearanceProbeIfReady();
     }
@@ -463,7 +475,7 @@ public partial class NetworkSmoke : Node
     private async void FinishAppearancePlayingProbe()
     {
         await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
-        _appearancePlayingRefused = TryMyAppearance(out var appearance) && appearance == SmokeAppearance;
+        _appearancePlayingRefused = TryMyAppearance(out var appearance) && appearance == LobbyUpdatedAppearance;
     }
 
     private void FinishServer()
@@ -472,7 +484,7 @@ public partial class NetworkSmoke : Node
         var success = _sawThreePeers && _sawPlaying && _securityHelpersPassed &&
                       _sawChat && _sawPhysicsInteraction && _identityRoundTripPassed && avatarGuard &&
                       _appearanceRegistrationPassed && _hostAppearanceRegistrationPassed && _hostAppearancePlayingRefused &&
-                      _rigAppearanceRenderingPassed && _spawnedRosterAppearanceRendered &&
+                      _rigAppearanceRenderingPassed && _spawnedClientAAppearanceRendered &&
                       SessionManager.Instance.Players.Count == 1;
         GD.Print(success
             ? "SMOKE SERVER PASS (3 peers, synchronized load, playing)"
@@ -490,7 +502,8 @@ public partial class NetworkSmoke : Node
                       _sawChat && _sawPhysicsInteraction &&
                       _clockSynchronized && _qualitySampled && _identityRoundTripPassed &&
                       avatarGuard && _sawAfkFlag && _sawAfkCleared && _appearanceRegistrationPassed &&
-                      _rigAppearanceRenderingPassed && _spawnedRosterAppearanceRendered &&
+                      _rigAppearanceRenderingPassed && _spawnedClientAAppearanceRendered &&
+                      (_clientName != "ClientA" || (_clientALobbyAppearanceUpdated && _clientAExistingRigUpdated)) &&
                       (_clientName != "ClientA" || (_appearanceInvalidRefused && _appearancePlayingRefused &&
                                                      _appearancePlayingRequestedInPlaying));
         GD.Print(success
@@ -498,7 +511,9 @@ public partial class NetworkSmoke : Node
             : $"SMOKE CLIENT FAIL name={_clientName}, roster={SessionManager.Instance.Players}, " +
               $"three={_sawThreePeers}, playing={_sawPlaying}, loaded={loadedScene}, " +
               $"clock={_clockSynchronized}, quality={_qualitySampled}, identityRoundTrip={_identityRoundTripPassed}, " +
-              $"avatarGuard={avatarGuard}, afkSet={_sawAfkFlag}, afkCleared={_sawAfkCleared}");
+              $"avatarGuard={avatarGuard}, afkSet={_sawAfkFlag}, afkCleared={_sawAfkCleared}, " +
+              $"rig={_rigAppearanceRenderingPassed}, spawnedClientA={_spawnedClientAAppearanceRendered}, " +
+              $"lobbyUpdate={_clientALobbyAppearanceUpdated}, existingRig={_clientAExistingRigUpdated}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }
@@ -695,35 +710,66 @@ public partial class NetworkSmoke : Node
                    CosmeticCatalogue.None);
     }
 
+    private void PrepareClientARigForLobbyUpdate(long clientA)
+    {
+        foreach (var node in GetTree().GetNodesInGroup("game_world"))
+        {
+            if (node is GameWorld world)
+            {
+                SpawnLobbyProbePlayer(world, clientA);
+                return;
+            }
+        }
+        _lobbyAppearanceWorld = new GameWorld { Name = "LobbyAppearanceWorld" };
+        AddChild(_lobbyAppearanceWorld);
+        SpawnLobbyProbePlayer(_lobbyAppearanceWorld, clientA);
+    }
+
+    private void SpawnLobbyProbePlayer(GameWorld world, long clientA)
+    {
+        var spawn = typeof(GameWorld).GetMethod("SpawnPlayer",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        spawn?.Invoke(world, [clientA, Vector3.Zero, EmoteCatalogue.None]);
+        var player = FindOwnPlayer();
+        if (player != null)
+        {
+            // This is a lobby-only renderer fixture. It must not submit a second network
+            // input stream from a path other peers do not have.
+            player.SetProcess(false);
+            player.SetPhysicsProcess(false);
+            player.SetProcessUnhandledInput(false);
+        }
+        _clientARigBeforeLobbyUpdate = player?.Avatar as BlockmanRig;
+    }
+
     // This must exercise the real renderer: the pure xUnit project intentionally never
-    // constructs Godot nodes. The second application represents a changed roster entry
-    // landing on a rig which was already ready, while the invalid values prove the rig's
-    // public rendering boundary cannot create undefined cosmetics.
+    // constructs Godot nodes. It verifies the direct rendering boundary separately from
+    // the accepted Lobby update routed through GameWorld above.
     private bool CheckRigAppearanceRendering()
     {
         var rig = new BlockmanRig { Name = "SmokeAppearanceRig" };
         AddChild(rig);
         rig.ApplyAppearance(SmokeAppearance);
         var spawnedAppearance = RigReflects(rig, SmokeAppearance);
-        var rosterUpdate = new AvatarAppearance(CosmeticCatalogue.RedBodyId, CosmeticCatalogue.None,
-            CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None);
-        rig.ApplyAppearance(rosterUpdate);
-        var existingRigUpdate = RigReflects(rig, rosterUpdate);
         rig.ApplyAppearance(new AvatarAppearance(999, 999, 999, 999, 999));
         var invalidFallback = RigReflects(rig, AvatarAppearance.Default);
         rig.QueueFree();
-        return spawnedAppearance && existingRigUpdate && invalidFallback;
+        return spawnedAppearance && invalidFallback;
     }
 
     private static bool RigReflects(BlockmanRig rig, AvatarAppearance requested)
     {
         var appearance = CosmeticCatalogue.Normalize(requested);
-        if (rig.GetAttachment(AvatarSlot.Head).GetChildCount() != (appearance.HeadId == CosmeticCatalogue.None ? 0 : 1) ||
-            rig.GetAttachment(AvatarSlot.Back).GetChildCount() != (appearance.BackId == CosmeticCatalogue.None ? 0 : 1) ||
-            rig.GetAttachment(AvatarSlot.Hips).GetChildCount() != (appearance.HipsId == CosmeticCatalogue.None ? 0 : 1) ||
-            rig.GetAttachment(AvatarSlot.HandLeft).GetChildCount() != (appearance.HandId == CosmeticCatalogue.None ? 0 : 1) ||
-            rig.GetAttachment(AvatarSlot.HandRight).GetChildCount() != (appearance.HandId == CosmeticCatalogue.None ? 0 : 1))
-            return false;
+        if (!MarkerReflects(rig.GetAttachment(AvatarSlot.Head), CosmeticSlot.Head, appearance.HeadId,
+                new Vector3(0.42f, 0.12f, 0.42f)) ||
+            !MarkerReflects(rig.GetAttachment(AvatarSlot.Back), CosmeticSlot.Back, appearance.BackId,
+                new Vector3(0.48f, 0.55f, 0.06f)) ||
+            !MarkerReflects(rig.GetAttachment(AvatarSlot.Hips), CosmeticSlot.Hips, appearance.HipsId,
+                new Vector3(0.56f, 0.12f, 0.34f)) ||
+            !MarkerReflects(rig.GetAttachment(AvatarSlot.HandLeft), CosmeticSlot.Hand, appearance.HandId,
+                new Vector3(0.22f, 0.16f, 0.22f)) ||
+            !MarkerReflects(rig.GetAttachment(AvatarSlot.HandRight), CosmeticSlot.Hand, appearance.HandId,
+                new Vector3(0.22f, 0.16f, 0.22f))) return false;
 
         var body = CosmeticCatalogue.All.First(entry =>
             entry.Slot == CosmeticSlot.BodyColor && entry.Id == appearance.BodyColorId);
@@ -739,10 +785,27 @@ public partial class NetworkSmoke : Node
         return sawBodyBox;
     }
 
+    private static bool MarkerReflects(Node3D marker, CosmeticSlot slot, int id, Vector3 expectedSize)
+    {
+        if (id == CosmeticCatalogue.None) return marker.GetChildCount() == 0;
+        if (marker.GetChildCount() != 1 || marker.GetChild(0) is not MeshInstance3D
+            {
+                Name: var name,
+                Mesh: BoxMesh { Size: var size },
+                MaterialOverride: StandardMaterial3D material
+            } || name != $"Cosmetic_{slot}_{id}" || !size.IsEqualApprox(expectedSize)) return false;
+        var definition = CosmeticCatalogue.All.First(entry => entry.Slot == slot && entry.Id == id);
+        return material.AlbedoColor.IsEqualApprox(new Color(definition.Red / 255f, definition.Green / 255f,
+            definition.Blue / 255f));
+    }
+
     private static readonly AvatarAppearance SmokeAppearance = new(
         CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId, CosmeticCatalogue.BackItemId,
         CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId);
     private static readonly AvatarAppearance HostSmokeAppearance = new(
+        CosmeticCatalogue.RedBodyId, CosmeticCatalogue.None, CosmeticCatalogue.None,
+        CosmeticCatalogue.None, CosmeticCatalogue.None);
+    private static readonly AvatarAppearance LobbyUpdatedAppearance = new(
         CosmeticCatalogue.RedBodyId, CosmeticCatalogue.None, CosmeticCatalogue.None,
         CosmeticCatalogue.None, CosmeticCatalogue.None);
 

@@ -101,7 +101,7 @@ public partial class BlockmanRig : AvatarRig
         var color = new Color(definition.Red / 255f, definition.Green / 255f, definition.Blue / 255f);
         _attachments[attachment].AddChild(new MeshInstance3D
         {
-            Name = $"Cosmetic_{slot}",
+            Name = $"Cosmetic_{slot}_{id}",
             Mesh = new BoxMesh { Size = size },
             Position = position,
             MaterialOverride = new StandardMaterial3D { AlbedoColor = color }
