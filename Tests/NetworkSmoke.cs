@@ -51,6 +51,10 @@ public partial class NetworkSmoke : Node
     private long _sitterPeerId = -1;
     private bool _sawLateJoinSpawnedSitterNode;
     private bool _sawLateJoinEmote;
+    private bool _appearanceRegistrationPassed;
+    private bool _appearanceInvalidRefused;
+    private bool _appearancePlayingRefused;
+    private bool _appearanceUpdateRequested;
 
     public override void _Ready()
     {
@@ -89,6 +93,8 @@ public partial class NetworkSmoke : Node
         }
         else if (_role == "client")
         {
+            if (_clientName == "ClientA")
+                AppearanceProfileService.Instance.SetRequestedAppearance(SmokeAppearance);
             SessionManager.Instance.PlayerName = _clientName;
             SessionManager.Instance.JoinEnet("127.0.0.1", Port);
             FinishAfter(9, FinishClient);
@@ -346,6 +352,18 @@ public partial class NetworkSmoke : Node
             _sawAfkFlag |= afk;
             _sawAfkCleared |= _sawAfkFlag && !afk;
         }
+        var clientA = ResolvePeerIdByName("ClientA");
+        if (clientA >= 0 && players.TryGetValue(clientA, out var clientAData))
+        {
+            var clientAAppearance = PlayerIdentity.FromDictionary(clientA, clientAData).Appearance;
+            _appearanceRegistrationPassed |= clientAAppearance == SmokeAppearance;
+        }
+        if (_role == "client" && _clientName == "ClientA" && players.Count == 3 && !_appearanceUpdateRequested &&
+            SessionManager.Instance.State == SessionManager.SessionState.Lobby)
+        {
+            _appearanceUpdateRequested = true;
+            _ = DriveAppearanceProbes();
+        }
         if (_role == "kick-server" && players.Count == 3 && !_startedKickProbe && Multiplayer.IsServer())
         {
             _startedKickProbe = true;
@@ -398,11 +416,23 @@ public partial class NetworkSmoke : Node
         callback();
     }
 
+    private async Task DriveAppearanceProbes()
+    {
+        SessionManager.Instance.RequestAppearance(new AvatarAppearance(999, 999, 999, 999, 999));
+        await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
+        _appearanceInvalidRefused = TryMyAppearance(out var appearance) && appearance == SmokeAppearance;
+        await ToSignal(GetTree().CreateTimer(1.2), SceneTreeTimer.SignalName.Timeout);
+        SessionManager.Instance.RequestAppearance(AvatarAppearance.Default);
+        await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
+        _appearancePlayingRefused = TryMyAppearance(out appearance) && appearance == SmokeAppearance;
+    }
+
     private void FinishServer()
     {
         var avatarGuard = _sawPlayerNodes && !_avatarBuiltHeadless;
         var success = _sawThreePeers && _sawPlaying && _securityHelpersPassed &&
                       _sawChat && _sawPhysicsInteraction && _identityRoundTripPassed && avatarGuard &&
+                      _appearanceRegistrationPassed &&
                       SessionManager.Instance.Players.Count == 1;
         GD.Print(success
             ? "SMOKE SERVER PASS (3 peers, synchronized load, playing)"
@@ -419,7 +449,8 @@ public partial class NetworkSmoke : Node
         var success = _sawThreePeers && _sawPlaying && loadedScene &&
                       _sawChat && _sawPhysicsInteraction &&
                       _clockSynchronized && _qualitySampled && _identityRoundTripPassed &&
-                      avatarGuard && _sawAfkFlag && _sawAfkCleared;
+                      avatarGuard && _sawAfkFlag && _sawAfkCleared && _appearanceRegistrationPassed &&
+                      (_clientName != "ClientA" || (_appearanceInvalidRefused && _appearancePlayingRefused));
         GD.Print(success
             ? $"SMOKE CLIENT PASS ({_clientName}, synchronized scene and clock)"
             : $"SMOKE CLIENT FAIL name={_clientName}, roster={SessionManager.Instance.Players}, " +
@@ -619,5 +650,17 @@ public partial class NetworkSmoke : Node
                partialIdentity.Appearance == new AvatarAppearance(AvatarAppearance.Default.BodyColorId,
                    CosmeticCatalogue.HeadItemId, CosmeticCatalogue.None, CosmeticCatalogue.None,
                    CosmeticCatalogue.None);
+    }
+
+    private static readonly AvatarAppearance SmokeAppearance = new(
+        CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId, CosmeticCatalogue.BackItemId,
+        CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId);
+
+    private bool TryMyAppearance(out AvatarAppearance appearance)
+    {
+        appearance = AvatarAppearance.Default;
+        if (!SessionManager.Instance.Players.TryGetValue(Multiplayer.GetUniqueId(), out var data)) return false;
+        appearance = PlayerIdentity.FromDictionary(Multiplayer.GetUniqueId(), data).Appearance;
+        return true;
     }
 }
