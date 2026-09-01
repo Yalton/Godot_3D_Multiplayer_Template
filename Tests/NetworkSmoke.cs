@@ -67,7 +67,8 @@ public partial class NetworkSmoke : Node
     private bool _clientAExistingRigUpdated;
     private BlockmanRig? _clientARigBeforeLobbyUpdate;
     private GameWorld? _lobbyAppearanceWorld;
-    private bool _appearancePanelPassed;
+    private bool _appearancePanelOpenSelectionPassed;
+    private bool _appearancePanelTeardownPassed;
     private bool _appearancePanelProbeStarted;
     private AppearanceCustomizationPanel? _appearancePanel;
 
@@ -79,13 +80,12 @@ public partial class NetworkSmoke : Node
             if (arg.StartsWith("--smoke-name=")) _clientName = arg["--smoke-name=".Length..];
         }
         SessionManager.Instance.RosterChanged += OnRoster;
-        SessionManager.Instance.StateChanged += (_, current) =>
+        SessionManager.Instance.StateChanged += (previous, current) =>
         {
             _sawPlaying |= current == SessionManager.SessionState.Playing;
             if (current == SessionManager.SessionState.Playing)
             {
-                _appearancePanelPassed |= _appearancePanel is { IsOpen: false } &&
-                                          !LocalInputContext.Instance.GameplaySuppressed;
+                _ = VerifyAppearancePanelTeardownAfterStateChange();
                 SubmitFeatureChecks();
                 RequestPlayingAppearanceProbeIfReady();
             }
@@ -423,7 +423,7 @@ public partial class NetworkSmoke : Node
         }
         if (_role is not ("server" or "client")) return;
         if (players.Count != 3) return;
-        if (_role == "client" && _clientName == "ClientA" && !_appearancePanelPassed) return;
+        if (_role == "client" && _clientName == "ClientA" && !_appearancePanelOpenSelectionPassed) return;
         if (!Multiplayer.IsServer() && !_requestedReady)
         {
             _requestedReady = true;
@@ -485,10 +485,21 @@ public partial class NetworkSmoke : Node
                       body.GetItemId(body.Selected) == CosmeticCatalogue.RedBodyId &&
                       _appearancePanel.PreviewRig != null &&
                       RigReflects(_appearancePanel.PreviewRig, rosterAppearance);
-        _appearancePanelPassed = opened && updated;
+        _appearancePanelOpenSelectionPassed = opened && updated;
         _appearanceUpdateRequested = true;
         PrepareClientARigForLobbyUpdate(ResolvePeerIdByName("ClientA"));
         _ = DriveAppearanceProbes();
+    }
+
+    // NetworkSmoke subscribed before the panel was created, so StateChanged reaches this
+    // callback first. Yielding one frame proves the panel's own handler has actually run
+    // instead of accidentally sampling its pre-hide state.
+    private async Task VerifyAppearancePanelTeardownAfterStateChange()
+    {
+        if (_role != "client" || _clientName != "ClientA" || _appearancePanel == null) return;
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        _appearancePanelTeardownPassed = !_appearancePanel.IsOpen &&
+                                          !LocalInputContext.Instance.GameplaySuppressed;
     }
 
     private void RequestPlayingAppearanceProbeIfReady()
@@ -541,7 +552,7 @@ public partial class NetworkSmoke : Node
                       _rigAppearanceRenderingPassed &&
                       (_clientName != "ClientA" || (_spawnedClientAAppearanceRendered &&
                                                      _clientALobbyAppearanceUpdated && _clientAExistingRigUpdated &&
-                                                     _appearancePanelPassed)) &&
+                                                     _appearancePanelOpenSelectionPassed && _appearancePanelTeardownPassed)) &&
                       (_clientName != "ClientA" || (_appearanceInvalidRefused && _appearancePlayingRefused &&
                                                      _appearancePlayingRequestedInPlaying));
         GD.Print(success
@@ -552,7 +563,8 @@ public partial class NetworkSmoke : Node
               $"avatarGuard={avatarGuard}, afkSet={_sawAfkFlag}, afkCleared={_sawAfkCleared}, " +
               $"rig={_rigAppearanceRenderingPassed}, spawnedClientA={_spawnedClientAAppearanceRendered}, " +
               $"lobbyUpdate={_clientALobbyAppearanceUpdated}, existingRig={_clientAExistingRigUpdated}, " +
-              $"appearancePanel={_appearancePanelPassed}");
+              $"appearancePanelOpenSelection={_appearancePanelOpenSelectionPassed}, " +
+              $"appearancePanelTeardown={_appearancePanelTeardownPassed}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }
