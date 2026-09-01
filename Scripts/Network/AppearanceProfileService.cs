@@ -16,6 +16,7 @@ public partial class AppearanceProfileService : Node
     public override void _Ready()
     {
         Instance = this;
+        if (_config.Load(ProfilePath) != Error.Ok) _config.Clear();
         var values = new Dictionary<string, int>
         {
             [AppearanceProfileCodec.BodyColorKey] = Read(AppearanceProfileCodec.BodyColorKey, AvatarAppearance.Default.BodyColorId),

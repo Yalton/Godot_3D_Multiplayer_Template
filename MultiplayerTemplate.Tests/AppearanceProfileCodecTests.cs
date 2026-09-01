@@ -29,4 +29,31 @@ public sealed class AppearanceProfileCodecTests
 
         Assert.Equal(appearance, restored);
     }
+
+    [Fact]
+    public void FullAppearanceDictionaryContainsEveryRosterKey()
+    {
+        var values = AppearanceProfileCodec.ToDictionary(new AvatarAppearance(
+            CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId, CosmeticCatalogue.BackItemId,
+            CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId));
+
+        Assert.Equal(5, values.Count);
+        Assert.Equal(CosmeticCatalogue.GreenBodyId, values[AppearanceProfileCodec.BodyColorKey]);
+        Assert.Equal(CosmeticCatalogue.HeadItemId, values[AppearanceProfileCodec.HeadKey]);
+        Assert.Equal(CosmeticCatalogue.BackItemId, values[AppearanceProfileCodec.BackKey]);
+        Assert.Equal(CosmeticCatalogue.HipsItemId, values[AppearanceProfileCodec.HipsKey]);
+        Assert.Equal(CosmeticCatalogue.HandItemId, values[AppearanceProfileCodec.HandKey]);
+    }
+
+    [Fact]
+    public void PartialAppearanceDictionaryUsesDefaultsForOmittedSlots()
+    {
+        var appearance = AppearanceProfileCodec.FromDictionary(new Dictionary<string, int>
+        {
+            [AppearanceProfileCodec.HeadKey] = CosmeticCatalogue.HeadItemId
+        });
+
+        Assert.Equal(new AvatarAppearance(AvatarAppearance.Default.BodyColorId, CosmeticCatalogue.HeadItemId,
+            CosmeticCatalogue.None, CosmeticCatalogue.None, CosmeticCatalogue.None), appearance);
+    }
 }

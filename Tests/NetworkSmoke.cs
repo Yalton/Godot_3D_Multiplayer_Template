@@ -595,7 +595,9 @@ public partial class NetworkSmoke : Node
 
     private static bool CheckIdentityRoundTrip()
     {
-        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true);
+        var appearance = new AvatarAppearance(CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId,
+            CosmeticCatalogue.BackItemId, CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId);
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true, appearance);
         var restored = PlayerIdentity.FromDictionary(7, identity.ToDictionary());
         var legacy = new Godot.Collections.Dictionary
         {
@@ -605,7 +607,17 @@ public partial class NetworkSmoke : Node
             ["is_host"] = false,
             ["ready"] = false
         };
+        var partial = new Godot.Collections.Dictionary
+        {
+            [AppearanceProfileCodec.HeadKey] = CosmeticCatalogue.HeadItemId
+        };
+        var legacyIdentity = PlayerIdentity.FromDictionary(9, legacy);
+        var partialIdentity = PlayerIdentity.FromDictionary(9, partial);
         return restored.Afk && restored.Ready && restored.DisplayName == "Ann" &&
-               !PlayerIdentity.FromDictionary(9, legacy).Afk;
+               restored.Appearance == appearance && !legacyIdentity.Afk &&
+               legacyIdentity.Appearance == AvatarAppearance.Default &&
+               partialIdentity.Appearance == new AvatarAppearance(AvatarAppearance.Default.BodyColorId,
+                   CosmeticCatalogue.HeadItemId, CosmeticCatalogue.None, CosmeticCatalogue.None,
+                   CosmeticCatalogue.None);
     }
 }

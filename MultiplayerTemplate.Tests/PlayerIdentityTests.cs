@@ -1,3 +1,4 @@
+using MultiplayerTemplate.Avatar;
 using MultiplayerTemplate.Network;
 
 namespace MultiplayerTemplate.Tests;
@@ -39,6 +40,25 @@ public sealed class PlayerIdentityTests
     public void AfkIsCarriedOnTheRecord()
     {
         Assert.True(new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true).Afk);
+    }
+
+    [Fact]
+    public void OmittedAppearanceUsesCanonicalDefault()
+    {
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true);
+
+        Assert.Equal(AvatarAppearance.Default, identity.Appearance);
+    }
+
+    [Fact]
+    public void ExplicitAppearanceIsRetained()
+    {
+        var appearance = new AvatarAppearance(CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId,
+            CosmeticCatalogue.BackItemId, CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId);
+
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, false, appearance);
+
+        Assert.Equal(appearance, identity.Appearance);
     }
 
 }
