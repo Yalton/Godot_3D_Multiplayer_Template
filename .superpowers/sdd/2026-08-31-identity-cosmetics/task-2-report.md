@@ -141,3 +141,51 @@ Passed!  - Failed:     0, Passed:   128, Skipped:     0, Total:   128, Duration:
   checks.
 - No concern remains within this narrow compatibility fix. Unrelated dirty documentation files
   were not staged.
+
+## Fix Round 3 — Lower-case named appearance compatibility
+
+### Scope
+
+Confirmed the pre-Task-2 positional record parameters use lower-case source parameter names and
+restored the required lower-case `appearance:` argument while preserving the Pascal-case
+`Appearance` property used by roster code and `with` expressions.
+
+### RED
+
+Command:
+
+```text
+dotnet test MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj --filter "FullyQualifiedName~PlayerIdentityTests"
+```
+
+Output:
+
+```text
+MultiplayerTemplate.Tests/PlayerIdentityTests.cs(82,76): error CS1739: The best overload for 'PlayerIdentity' does not have a parameter named 'appearance'
+```
+
+### GREEN and verification
+
+```text
+dotnet test MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj --filter "FullyQualifiedName~PlayerIdentityTests"
+Passed!  - Failed:     0, Passed:    10, Skipped:     0, Total:    10, Duration: 41 ms
+
+dotnet test MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj
+Passed!  - Failed:     0, Passed:   128, Skipped:     0, Total:   128, Duration: 42 ms
+```
+
+### Files changed
+
+- `Scripts/Network/PlayerIdentity.cs`
+- `MultiplayerTemplate.Tests/PlayerIdentityTests.cs`
+- `.superpowers/sdd/2026-08-31-identity-cosmetics/task-2-report.md`
+
+### Self-review and concerns
+
+- The primary-constructor parameter is exactly `appearance`, so a caller can omit `afk` and use
+  `appearance:`. The lower-case positional member normalizes an omitted struct default, which
+  also keeps deconstruction canonical.
+- The Pascal-case `Appearance` init alias remains available for existing roster access and `with`
+  expressions. The regression test compiles and exercises lower-case named construction, `with`,
+  and deconstruction.
+- No remaining concerns in this narrow fix. Unrelated dirty documentation files were not staged.

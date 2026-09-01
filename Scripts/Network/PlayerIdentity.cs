@@ -12,10 +12,16 @@ public readonly record struct PlayerIdentity(
     bool IsHost,
     bool Ready,
     bool Afk = false,
-    AvatarAppearance Appearance = default)
+    AvatarAppearance appearance = default)
 {
-    public AvatarAppearance Appearance { get; init; } =
-        Appearance == default ? AvatarAppearance.Default : Appearance;
+    public AvatarAppearance appearance { get; init; } =
+        appearance == default ? AvatarAppearance.Default : appearance;
+
+    public AvatarAppearance Appearance
+    {
+        get => appearance;
+        init => appearance = value;
+    }
 
     public bool HasSteamIdentity => Platform == "Steam" && SteamId != 0;
     public string StableSocialKey => HasSteamIdentity
