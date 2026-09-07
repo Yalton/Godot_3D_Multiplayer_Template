@@ -64,7 +64,48 @@ public partial class BlockmanRig : AvatarRig
 
     public override void ApplyAppearance(AvatarAppearance appearance)
     {
-        foreach (var material in _materials) material.AlbedoColor = appearance.BodyColor;
+        appearance = CosmeticCatalogue.Normalize(appearance);
+        var definition = CosmeticCatalogue.All.FirstOrDefault(entry =>
+            entry.Slot == CosmeticSlot.BodyColor && entry.Id == appearance.BodyColorId);
+        var color = new Color(definition.Red / 255f, definition.Green / 255f, definition.Blue / 255f);
+        foreach (var material in _materials) material.AlbedoColor = color;
+
+        ClearCosmetics();
+        AddCosmetic(AvatarSlot.Head, CosmeticSlot.Head, appearance.HeadId,
+            new Vector3(0.42f, 0.12f, 0.42f), new Vector3(0, 0.08f, 0));
+        AddCosmetic(AvatarSlot.Back, CosmeticSlot.Back, appearance.BackId,
+            new Vector3(0.48f, 0.55f, 0.06f), new Vector3(0, 0, -0.03f));
+        AddCosmetic(AvatarSlot.Hips, CosmeticSlot.Hips, appearance.HipsId,
+            new Vector3(0.56f, 0.12f, 0.34f), Vector3.Zero);
+        AddCosmetic(AvatarSlot.HandLeft, CosmeticSlot.Hand, appearance.HandId,
+            new Vector3(0.22f, 0.16f, 0.22f), Vector3.Zero);
+        AddCosmetic(AvatarSlot.HandRight, CosmeticSlot.Hand, appearance.HandId,
+            new Vector3(0.22f, 0.16f, 0.22f), Vector3.Zero);
+    }
+
+    private void ClearCosmetics()
+    {
+        foreach (var marker in _attachments.Values)
+        foreach (var child in marker.GetChildren())
+            if (child.Name.ToString().StartsWith("Cosmetic_"))
+            {
+                marker.RemoveChild(child);
+                child.QueueFree();
+            }
+    }
+
+    private void AddCosmetic(AvatarSlot attachment, CosmeticSlot slot, int id, Vector3 size, Vector3 position)
+    {
+        if (id == CosmeticCatalogue.None) return;
+        var definition = CosmeticCatalogue.All.First(entry => entry.Slot == slot && entry.Id == id);
+        var color = new Color(definition.Red / 255f, definition.Green / 255f, definition.Blue / 255f);
+        _attachments[attachment].AddChild(new MeshInstance3D
+        {
+            Name = $"Cosmetic_{slot}_{id}",
+            Mesh = new BoxMesh { Size = size },
+            Position = position,
+            MaterialOverride = new StandardMaterial3D { AlbedoColor = color }
+        });
     }
 
     private static string StateNodeName(LocomotionState state) => state switch

@@ -22,6 +22,7 @@ public partial class GameWorld : Node3D
         AddToGroup("game_world");
         SessionManager.Instance.MatchStarted += OnMatchStarted;
         SessionManager.Instance.MatchEnded += ClearPlayers;
+        SessionManager.Instance.RosterChanged += OnRosterChanged;
         Multiplayer.PeerDisconnected += DespawnPlayer;
         Visible = false;
     }
@@ -32,6 +33,7 @@ public partial class GameWorld : Node3D
         {
             SessionManager.Instance.MatchStarted -= OnMatchStarted;
             SessionManager.Instance.MatchEnded -= ClearPlayers;
+            SessionManager.Instance.RosterChanged -= OnRosterChanged;
         }
         Multiplayer.PeerDisconnected -= DespawnPlayer;
     }
@@ -90,7 +92,22 @@ public partial class GameWorld : Node3D
         _players[peerId] = player;
         AddChild(player);
         player.GlobalPosition = position;
+        ApplyRosterAppearance(peerId);
         if (activeEmote != Avatar.EmoteCatalogue.None) player.PlayEmoteLocally(activeEmote);
+    }
+
+    private void OnRosterChanged(Godot.Collections.Dictionary<long, Godot.Collections.Dictionary> roster)
+    {
+        foreach (var peerId in roster.Keys) ApplyRosterAppearance(peerId);
+    }
+
+    private void ApplyRosterAppearance(long peerId)
+    {
+        if (!_players.TryGetValue(peerId, out var player) || player.Avatar is not { } rig ||
+            !SessionManager.Instance.Players.TryGetValue(peerId, out var data)) return;
+        var appearance = PlayerIdentity.FromDictionary(peerId, data).Appearance;
+        if (rig.IsNodeReady()) rig.ApplyAppearance(appearance);
+        else rig.Ready += () => rig.ApplyAppearance(appearance);
     }
 
     private Vector3 SpawnPosition(long peerId)

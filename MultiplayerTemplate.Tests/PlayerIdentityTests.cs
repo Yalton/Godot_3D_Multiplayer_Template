@@ -1,3 +1,4 @@
+using MultiplayerTemplate.Avatar;
 using MultiplayerTemplate.Network;
 
 namespace MultiplayerTemplate.Tests;
@@ -40,4 +41,52 @@ public sealed class PlayerIdentityTests
     {
         Assert.True(new PlayerIdentity(7, "Ann", "LAN", 0, false, true, true).Afk);
     }
+
+    [Fact]
+    public void OmittedAppearanceUsesCanonicalDefault()
+    {
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true);
+        var (_, _, _, _, _, _, _, deconstructedAppearance) = identity;
+
+        Assert.Equal(AvatarAppearance.Default, identity.Appearance);
+        Assert.Equal(AvatarAppearance.Default, deconstructedAppearance);
+    }
+
+    [Fact]
+    public void ExplicitAppearanceIsRetained()
+    {
+        var appearance = new AvatarAppearance(CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId,
+            CosmeticCatalogue.BackItemId, CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId);
+
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, false, appearance);
+
+        Assert.Equal(appearance, identity.Appearance);
+    }
+
+    [Fact]
+    public void RetainsPositionalRecordCompatibilityForAppearance()
+    {
+        var constructor = typeof(PlayerIdentity).GetConstructors()
+            .Single(candidate => candidate.GetParameters().Length == 8);
+        var parameters = constructor.GetParameters();
+
+        Assert.NotNull(typeof(PlayerIdentity).GetMethod("Deconstruct"));
+        Assert.True(typeof(PlayerIdentity).GetProperty(nameof(PlayerIdentity.Appearance))!.CanWrite);
+        Assert.True(parameters[6].IsOptional);
+        Assert.True(parameters[7].IsOptional);
+    }
+
+    [Fact]
+    public void SupportsNamedAppearanceWithExpressionsAndDeconstruction()
+    {
+        var appearance = new AvatarAppearance(CosmeticCatalogue.GreenBodyId, CosmeticCatalogue.HeadItemId,
+            CosmeticCatalogue.BackItemId, CosmeticCatalogue.HipsItemId, CosmeticCatalogue.HandItemId);
+        var identity = new PlayerIdentity(7, "Ann", "LAN", 0, false, true, appearance: appearance);
+        var updated = identity with { Ready = false };
+        var (_, _, _, _, _, ready, _, restoredAppearance) = updated;
+
+        Assert.False(ready);
+        Assert.Equal(appearance, restoredAppearance);
+    }
+
 }

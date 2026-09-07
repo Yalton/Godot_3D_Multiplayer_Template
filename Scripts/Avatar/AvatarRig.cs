@@ -13,10 +13,8 @@ public enum AvatarSlot
 }
 
 /// <summary>
-/// Replicated-cosmetic description of a character. P1 carries only a body colour;
-/// P2 extends this record with cosmetic slots.
+/// Replicated-cosmetic description of a character. Values are catalogue IDs only.
 /// </summary>
-public readonly record struct AvatarAppearance(Color BodyColor);
 
 /// <summary>
 /// Replacement seam for the character body. Supply your own rig by setting the
@@ -44,6 +42,5 @@ public abstract partial class AvatarRig : Node3D
     /// session still gives every player a distinguishable colour before P2 adds
     /// real customization.
     /// </summary>
-    public static AvatarAppearance DefaultAppearanceFor(long peerId) =>
-        new(Color.FromHsv(Mathf.PosMod(peerId * 0.19f, 1f), 0.7f, 0.9f));
+    public static AvatarAppearance DefaultAppearanceFor(long peerId) => AvatarAppearance.Default;
 }

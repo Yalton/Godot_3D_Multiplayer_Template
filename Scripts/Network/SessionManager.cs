@@ -3,6 +3,7 @@ using Godot.Collections;
 using PlayerRoster = Godot.Collections.Dictionary<long, Godot.Collections.Dictionary>;
 using DebugLoggerKit;
 using MultiplayerTemplate.Game;
+using MultiplayerTemplate.Avatar;
 
 namespace MultiplayerTemplate.Network;
 
@@ -119,6 +120,18 @@ public partial class SessionManager : Node
         else RpcId(1, nameof(RequestReady), ready);
     }
 
+    public void RequestAppearance(AvatarAppearance appearance)
+    {
+        if (!Multiplayer.HasMultiplayerPeer()) return;
+        if (Multiplayer.IsServer())
+        {
+            RequestAppearanceServer(Multiplayer.GetUniqueId(), appearance);
+            return;
+        }
+        RpcId(1, nameof(RequestAppearanceRpc), appearance.BodyColorId, appearance.HeadId,
+            appearance.BackId, appearance.HipsId, appearance.HandId);
+    }
+
     public void StartMatch()
     {
         if (!Multiplayer.IsServer() || Players.Count == 0) return;
@@ -170,7 +183,8 @@ public partial class SessionManager : Node
     {
         var steamId = Transport == TransportKind.Steam ? Steam.SteamId : 0;
         var platform = steamId != 0 ? "Steam" : "LAN";
-        Players[1] = new PlayerIdentity(1, PlayerName, platform, steamId, true, true, false).ToDictionary();
+        var appearance = CosmeticCatalogue.Normalize(AppearanceProfileService.Instance.RequestedAppearance);
+        Players[1] = new PlayerIdentity(1, PlayerName, platform, steamId, true, true, false, appearance).ToDictionary();
         RosterChanged?.Invoke(Players);
     }
 
@@ -194,9 +208,11 @@ public partial class SessionManager : Node
             ? ProtocolVersionOverrideForTesting : NetworkBuildInfo.ProtocolVersion;
         var steamId = Transport == TransportKind.Steam ? Steam.SteamId : 0;
         var platform = steamId != 0 ? "Steam" : OS.GetName();
+        var appearance = AppearanceProfileService.Instance.RequestedAppearance;
         RpcId(1, nameof(RegisterPlayer), PlayerName, steamId, platform,
             NetworkBuildInfo.GameVersion, protocol,
-            $"{NetworkBuildInfo.GameVersion}-protocol.{protocol}", OS.GetName());
+            $"{NetworkBuildInfo.GameVersion}-protocol.{protocol}", OS.GetName(),
+            appearance.BodyColorId, appearance.HeadId, appearance.BackId, appearance.HipsId, appearance.HandId);
         ConnectionStateChanged?.Invoke("connecting", "Validating session compatibility…");
     }
 
@@ -230,7 +246,8 @@ public partial class SessionManager : Node
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void RegisterPlayer(
         string requestedName, long steamId, string identityPlatform, string gameVersion,
-        int protocolVersion, string buildId, string platform)
+        int protocolVersion, string buildId, string platform,
+        int bodyColorId, int headId, int backId, int hipsId, int handId)
     {
         if (!RpcSecurity.RequireServer(this, nameof(RegisterPlayer))) return;
         var sender = Multiplayer.GetRemoteSenderId();
@@ -256,8 +273,9 @@ public partial class SessionManager : Node
         var safeName = requestedName.Trim();
         if (safeName.Length > 24) safeName = safeName[..24];
         if (safeName.Length == 0) safeName = $"Player {sender}";
+        var appearance = CosmeticCatalogue.Normalize(new AvatarAppearance(bodyColorId, headId, backId, hipsId, handId));
         Players[sender] = new PlayerIdentity(
-            sender, safeName, identityPlatform, steamId, false, false, false).ToDictionary();
+            sender, safeName, identityPlatform, steamId, false, false, false, appearance).ToDictionary();
         Rpc(nameof(SyncRoster), Players);
         RpcId(sender, nameof(ConnectionAccepted), (int)State, Players);
         RosterChanged?.Invoke(Players);
@@ -269,6 +287,47 @@ public partial class SessionManager : Node
         await ToSignal(GetTree().CreateTimer(0.25), SceneTreeTimer.SignalName.Timeout);
         if (Multiplayer.HasMultiplayerPeer() && Multiplayer.GetPeers().Contains((int)peerId))
             Multiplayer.MultiplayerPeer.DisconnectPeer((int)peerId);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void RequestAppearanceRpc(int bodyColorId, int headId, int backId, int hipsId, int handId)
+    {
+        if (!RpcSecurity.RequireServer(this, nameof(RequestAppearanceRpc))) return;
+        var sender = Multiplayer.GetRemoteSenderId();
+        RequestAppearanceServer(sender, new AvatarAppearance(bodyColorId, headId, backId, hipsId, handId));
+    }
+
+    private void RequestAppearanceServer(long sender, AvatarAppearance requested)
+    {
+        if (!RpcSecurity.RequireServer(this, nameof(RequestAppearanceRpc))) return;
+        if (!Players.ContainsKey(sender))
+        {
+            RpcSecurity.Reject(nameof(RequestAppearanceRpc), sender, "sender is not registered");
+            return;
+        }
+        if (!RpcSecurity.RequireState(State, sender, nameof(RequestAppearanceRpc), SessionState.Lobby)) return;
+        if (!_requestLimiter.Allow(sender, nameof(RequestAppearanceRpc), 6, 5000))
+        {
+            RpcSecurity.Reject(nameof(RequestAppearanceRpc), sender, "rate limit exceeded");
+            return;
+        }
+        var normalized = CosmeticCatalogue.Normalize(requested);
+        if (normalized != requested)
+        {
+            RpcSecurity.Reject(nameof(RequestAppearanceRpc), sender, "invalid cosmetic IDs");
+            return;
+        }
+        UpdateAppearanceServer(sender, normalized);
+    }
+
+    private void UpdateAppearanceServer(long peerId, AvatarAppearance appearance)
+    {
+        if (!Players.TryGetValue(peerId, out var data)) return;
+        var existing = PlayerIdentity.FromDictionary(peerId, data);
+        if (existing.Appearance == appearance) return;
+        Players[peerId] = (existing with { Appearance = appearance }).ToDictionary();
+        Rpc(nameof(SyncRoster), Players);
+        RosterChanged?.Invoke(Players);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
