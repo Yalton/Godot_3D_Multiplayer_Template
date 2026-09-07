@@ -72,6 +72,7 @@ public partial class NetworkSmoke : Node
     private bool _appearancePanelProbeStarted;
     private AppearanceCustomizationPanel? _appearancePanel;
     private bool _appearanceSecurityProbeStarted;
+    private bool _appearanceSecurityProbeFinished;
     private bool _appearanceCrossSlotRefused;
     private bool _appearanceRateLimited;
     private bool _profilePersistencePassed;
@@ -435,6 +436,7 @@ public partial class NetworkSmoke : Node
         if (_role is not ("server" or "client")) return;
         if (players.Count != 3) return;
         if (_role == "client" && _clientName == "ClientA" && !_appearancePanelOpenSelectionPassed) return;
+        if (_role == "client" && _clientName == "ClientB" && !_appearanceSecurityProbeFinished) return;
         if (!Multiplayer.IsServer() && !_requestedReady)
         {
             _requestedReady = true;
@@ -493,6 +495,8 @@ public partial class NetworkSmoke : Node
         await ToSignal(GetTree().CreateTimer(0.35), SceneTreeTimer.SignalName.Timeout);
         _appearanceRateLimited = _appearanceCrossSlotRefused && TryMyAppearance(out var afterBurst) &&
                                  afterBurst == burst[4];
+        _appearanceSecurityProbeFinished = true;
+        OnRoster(SessionManager.Instance.Players);
     }
 
     // This is deliberately an engine-level contract: it proves the actual modal owns a

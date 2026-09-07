@@ -202,3 +202,25 @@ because Godot dictionaries crash standalone xUnit; engine/RPC behavior belongs i
 
 Use the physical path for all-tests if logical `/home/...` gets the known Runtime 10 test-host
 error: `bash -c 'cd -P /data/fast/Projects/Tech/Games/Godot/3DMultiplayerTemplate; exec bash Tests/run_all_tests.sh'`.
+
+## P2b final review resume — 2026-09-01
+
+Tasks 1–6 and their scoped review/fix loops are complete on
+`feature/identity-cosmetics`. The documentation commit is `93765e3`, with
+`bf48ac1` correcting three documentation-review findings. The working tree was clean before
+the final proof wave.
+
+The final whole-branch review found two missing proof points: cross-slot/rate-limit rejection
+was not exercised by the smoke harness, and persistence was only proven through the in-memory
+codec rather than a real `ConfigFile` reload. Commit `b512f62` addresses both: ClientB proves a
+cross-slot request and a seven-request burst preserve canonical roster state, while a new
+`AppearanceProfileService.LoadProfile(path)` seam supports an engine smoke test that writes,
+recreates, reloads, and corrupts a real profile. Its worker reports build green, 128 unit tests,
+the relevant smoke scenarios, and `git diff --check` green.
+
+**Final gate — completed 2026-09-07:** The scoped re-review initially found that ClientB could
+mark itself ready before its delayed rate-limit probe completed, permitting a state-gate
+rejection instead of exercising the limiter. The smoke harness now waits for that probe and
+re-enters its guarded ready path when it finishes. Re-review of the synchronization fix was
+clean. The physical-path all-tests wrapper passed at the final head: 128 unit tests and all 13
+multiplayer scenarios. P2b is ready for integration.
