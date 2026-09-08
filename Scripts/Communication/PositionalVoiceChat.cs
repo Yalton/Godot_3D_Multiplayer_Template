@@ -17,6 +17,9 @@ public partial class PositionalVoiceChat : Node
     public static PositionalVoiceChat Instance { get; private set; } = null!;
     public bool ClientCaptureEnabled => _captureAvailable;
     public float VoiceCaptureMeter { get; private set; }
+    public int ReceivedVoicePacketCount { get; private set; }
+    public int GetReceivedVoicePacketCount(VoiceChannel channel) =>
+        _receivedPacketsByChannel.GetValueOrDefault(channel);
 
     public bool IsSpeaking(long peerId) =>
         _speaking.IsSpeaking(peerId, Time.GetTicksMsec() / 1000.0);
@@ -30,6 +33,8 @@ public partial class PositionalVoiceChat : Node
         PlayerIdentityService.Instance.SetVoiceVolume(PlayerIdentityService.Instance.Get(peerId), clamped);
         if (_speakers.TryGetValue(peerId, out var speaker))
             speaker.VolumeDb = VoiceVolumePolicy.ToDecibels(clamped);
+        if (_globalSpeakers.TryGetValue(peerId, out var globalSpeaker))
+            globalSpeaker.VolumeDb = VoiceVolumePolicy.ToDecibels(clamped);
     }
     private const int PlaybackRate = 16000;
     private AudioEffectCapture? _capture;
@@ -41,20 +46,22 @@ public partial class PositionalVoiceChat : Node
     private VoiceActivityDetector _vad = new(VoiceSettingsPolicy.DefaultVadThreshold, 2);
     private float _vadThreshold = VoiceSettingsPolicy.DefaultVadThreshold;
     private readonly System.Collections.Generic.Dictionary<long, AudioStreamPlayer3D> _speakers = new();
-    private readonly System.Collections.Generic.Dictionary<long, VoiceJitterBuffer> _jitterBuffers = new();
-    private readonly System.Collections.Generic.Dictionary<long, IVoiceCodec> _decoders = new();
-    private readonly System.Collections.Generic.Dictionary<long, uint> _legacyReceiveSequences = new();
-    private readonly RpcRateLimiter _rateLimiter = new();
+    private readonly System.Collections.Generic.Dictionary<long, AudioStreamPlayer> _globalSpeakers = new();
+    private readonly System.Collections.Generic.Dictionary<(long PeerId, VoiceChannel Channel), VoiceJitterBuffer> _jitterBuffers = new();
+    private readonly System.Collections.Generic.Dictionary<(long PeerId, VoiceChannel Channel), IVoiceCodec> _decoders = new();
+    private readonly System.Collections.Generic.Dictionary<VoiceChannel, int> _receivedPacketsByChannel = new();
+    private readonly VoiceByteLimiter _voiceLimiter = new();
     private readonly SpeakingTracker _speaking = new();
     private bool _captureAvailable;
     private bool _micTestActive;
+    private readonly System.Collections.Generic.Dictionary<VoiceChannel, uint> _nextSequences = new();
 
     public override void _Ready()
     {
         Instance = this;
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
         SessionManager.Instance.MatchEnded += OnMatchEnded;
-        if (DisplayServer.GetName() == "headless")
+        if (DisplayServer.GetName() == "headless" && SessionManager.Instance.IsDedicatedServer)
         {
             ProcessMode = ProcessModeEnum.Disabled;
             return;
@@ -123,20 +130,26 @@ public partial class PositionalVoiceChat : Node
         StopMicTest();
         StopCapture();
         foreach (var speaker in _speakers.Values) speaker.QueueFree();
+        foreach (var speaker in _globalSpeakers.Values) speaker.QueueFree();
         _speakers.Clear();
+        _globalSpeakers.Clear();
         _jitterBuffers.Clear();
         _decoders.Clear();
-        _legacyReceiveSequences.Clear();
+        _receivedPacketsByChannel.Clear();
+        ReceivedVoicePacketCount = 0;
+        _nextSequences.Clear();
         _speaking.Clear();
     }
 
     private void OnPeerDisconnected(long peerId)
     {
-        _rateLimiter.Forget(peerId);
+        _voiceLimiter.Forget(peerId);
         if (_speakers.Remove(peerId, out var speaker)) speaker.QueueFree();
-        _jitterBuffers.Remove(peerId);
-        _decoders.Remove(peerId);
-        _legacyReceiveSequences.Remove(peerId);
+        if (_globalSpeakers.Remove(peerId, out var globalSpeaker)) globalSpeaker.QueueFree();
+        foreach (var key in _jitterBuffers.Keys.Where(key => key.PeerId == peerId).ToArray())
+            _jitterBuffers.Remove(key);
+        foreach (var key in _decoders.Keys.Where(key => key.PeerId == peerId).ToArray())
+            _decoders.Remove(key);
         _speaking.Remove(peerId);
     }
 
@@ -178,65 +191,85 @@ public partial class PositionalVoiceChat : Node
                 if (!canTransmit || _micTestActive || !ShouldTransmit(frame)) continue;
                 var encoded = _encoder?.Encode(frame) ?? [];
                 if (encoded.Length == 0) continue;
-                if (Multiplayer.IsServer()) RelayVoice(Multiplayer.GetUniqueId(), encoded);
-                else RpcId(1, nameof(SubmitVoice), encoded);
+                var channel = (VoiceChannel)SettingsManager.Instance.GetVoiceChannel();
+                var sequence = _nextSequences.GetValueOrDefault(channel);
+                _nextSequences[channel] = unchecked(sequence + 1);
+                var packet = new VoicePacket(VoiceWirePolicy.FormatVersion, channel, sequence, encoded);
+                if (Multiplayer.IsServer()) RelayVoice(Multiplayer.GetUniqueId(), packet);
+                else RpcId(1, nameof(SubmitVoice), packet.FormatVersion, (int)packet.Channel,
+                    (long)packet.Sequence, packet.Payload);
             }
         }
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
         TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 2)]
-    private void SubmitVoice(byte[] pcm)
+    private void SubmitVoice(int formatVersion, int channel, long sequence, byte[] payload)
     {
         if (!RpcSecurity.RequireServer(this, nameof(SubmitVoice)) ||
             !RpcSecurity.RequireKnownSender(this, nameof(SubmitVoice), out var sender) ||
             !RpcSecurity.RequireState(SessionManager.Instance.State, sender, nameof(SubmitVoice),
-                SessionManager.SessionState.Playing) || pcm.Length > 2048) return;
-        if (!_rateLimiter.Allow(sender, nameof(SubmitVoice), 60, 1000))
+                SessionManager.SessionState.Playing)) return;
+        var packet = new VoicePacket(formatVersion, (VoiceChannel)channel, unchecked((uint)sequence), payload);
+        if (!VoiceWirePolicy.IsValid(packet)) return;
+        if (!_voiceLimiter.TryConsume(sender, 1, payload.Length, unchecked((long)Time.GetTicksMsec())))
         {
             RpcSecurity.Reject(nameof(SubmitVoice), sender, "rate limit exceeded");
             return;
         }
-        RelayVoice(sender, pcm);
+        RelayVoice(sender, packet);
     }
 
-    private void RelayVoice(long peerId, byte[] pcm)
+    private void RelayVoice(long peerId, VoicePacket packet)
     {
-        if (!SessionManager.Instance.Players.ContainsKey(peerId)) return;
-        PlayPacket(peerId, pcm);
-        Rpc(nameof(ReceiveVoice), peerId, pcm);
+        if (!SessionManager.Instance.Players.ContainsKey(peerId) ||
+            GetTree().GetFirstNodeInGroup("game_world") is not GameWorld world) return;
+        foreach (var recipient in VoiceRoutingPolicy.Recipients(packet.Channel, peerId, world.VoicePoints()))
+        {
+            if (recipient == 1)
+                ReceiveVoice(peerId, packet.FormatVersion, (int)packet.Channel, (long)packet.Sequence, packet.Payload);
+            else RpcId((int)recipient, nameof(ReceiveVoice), peerId, packet.FormatVersion, (int)packet.Channel,
+                (long)packet.Sequence, packet.Payload);
+        }
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
         TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered, TransferChannel = 2)]
-    private void ReceiveVoice(long peerId, byte[] pcm)
+    private void ReceiveVoice(long peerId, int formatVersion, int channel, long sequence, byte[] payload)
     {
-        if (peerId != Multiplayer.GetUniqueId()) PlayPacket(peerId, pcm);
+        var packet = new VoicePacket(formatVersion, (VoiceChannel)channel, unchecked((uint)sequence), payload);
+        if (peerId != Multiplayer.GetUniqueId() && VoiceWirePolicy.IsValid(packet))
+        {
+            ReceivedVoicePacketCount++;
+            _receivedPacketsByChannel[packet.Channel] = GetReceivedVoicePacketCount(packet.Channel) + 1;
+            PlayPacket(peerId, packet);
+        }
     }
 
-    private void PlayPacket(long peerId, byte[] payload)
+    private void PlayPacket(long peerId, VoicePacket packet)
     {
         if (!_captureAvailable || peerId == Multiplayer.GetUniqueId() || IsLocallyMuted(peerId)) return;
         // Without a body to attach to, the speaker would sit at the world origin.
         if (FindPlayer(peerId) is not { } body) return;
-        var sequence = _legacyReceiveSequences.TryGetValue(peerId, out var previous)
-            ? previous
-            : 0;
-        _legacyReceiveSequences[peerId] = unchecked(sequence + 1);
-        var packet = new VoicePacket(VoiceWirePolicy.FormatVersion, VoiceChannel.Proximity, sequence, payload);
-        if (!_jitterBuffers.TryGetValue(peerId, out var jitter))
-            _jitterBuffers[peerId] = jitter = new VoiceJitterBuffer();
-        if (!_decoders.TryGetValue(peerId, out var decoder))
-            _decoders[peerId] = decoder = new OpusVoiceCodec();
+        var speakerKey = (peerId, packet.Channel);
+        if (!_jitterBuffers.TryGetValue(speakerKey, out var jitter))
+            _jitterBuffers[speakerKey] = jitter = new VoiceJitterBuffer();
+        if (!_decoders.TryGetValue(speakerKey, out var decoder))
+            _decoders[speakerKey] = decoder = new OpusVoiceCodec();
         jitter.Enqueue(packet);
         while (jitter.TryTake(out var next, out var packetLoss))
         {
             var frame = decoder.Decode(next, packetLoss);
             if (frame.Length == 0) continue;
             _speaking.NotePacket(peerId, Time.GetTicksMsec() / 1000.0);
-            var player = EnsureSpeaker(peerId);
-            player.GlobalPosition = body.GlobalPosition + Vector3.Up * 1.5f;
-            PushSamples(player, frame);
+            if (packet.Channel == VoiceChannel.Global)
+                PushSamples(EnsureGlobalSpeaker(peerId), frame);
+            else
+            {
+                var player = EnsureSpeaker(peerId);
+                player.GlobalPosition = body.GlobalPosition + Vector3.Up * 1.5f;
+                PushSamples(player, frame);
+            }
         }
     }
 
@@ -255,6 +288,21 @@ public partial class PositionalVoiceChat : Node
         AddChild(speaker);
         speaker.Play();
         _speakers[peerId] = speaker;
+        return speaker;
+    }
+
+    private AudioStreamPlayer EnsureGlobalSpeaker(long peerId)
+    {
+        if (_globalSpeakers.TryGetValue(peerId, out var existing)) return existing;
+        var speaker = new AudioStreamPlayer
+        {
+            Stream = new AudioStreamGenerator { MixRate = PlaybackRate, BufferLength = 0.25f },
+            Bus = "Voice",
+            VolumeDb = VoiceVolumePolicy.ToDecibels(GetPeerVolume(peerId))
+        };
+        AddChild(speaker);
+        speaker.Play();
+        _globalSpeakers[peerId] = speaker;
         return speaker;
     }
 

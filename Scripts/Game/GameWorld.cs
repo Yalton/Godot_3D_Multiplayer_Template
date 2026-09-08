@@ -1,6 +1,7 @@
 using Godot;
 using MultiplayerTemplate.Avatar;
 using MultiplayerTemplate.Network;
+using MultiplayerTemplate.Communication;
 
 namespace MultiplayerTemplate.Game;
 
@@ -16,6 +17,17 @@ public partial class GameWorld : Node3D
     [Export] public PackedScene? PlayerScene { get; set; }
 
     private readonly System.Collections.Generic.Dictionary<long, NetworkPlayer> _players = new();
+
+    public IReadOnlyDictionary<long, VoicePoint> VoicePoints()
+    {
+        var points = new Dictionary<long, VoicePoint>();
+        foreach (var (peerId, player) in _players)
+        {
+            var position = player.GlobalPosition;
+            points[peerId] = new VoicePoint(position.X, position.Y, position.Z);
+        }
+        return points;
+    }
 
     public override void _Ready()
     {
