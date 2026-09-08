@@ -1,4 +1,5 @@
 using Godot;
+using MultiplayerTemplate.Communication;
 using Godot.Collections;
 using MultiplayerTemplate.DebugTools;
 using MultiplayerTemplate.Network;
@@ -156,6 +157,7 @@ public partial class Main : Node
 			SettingsManager.Instance.SetSfxVolume));
 		audio.AddChild(SliderRow("Ambience Volume", SettingsManager.Instance.GetAmbienceVolume(), 0, 100, 1,
 			SettingsManager.Instance.SetAmbienceVolume));
+		audio.AddChild(VoiceOptions());
 
 		var video = new VBoxContainer { Name = "Video & Input" };
 		tabs.AddChild(video);
@@ -201,7 +203,44 @@ public partial class Main : Node
 	private void ShowOptions(bool visible)
 	{
 		_options.Visible = visible;
+		if (!visible) PositionalVoiceChat.Instance?.StopMicTest();
 		LocalInputContext.Instance.SetBlocked("options", visible);
+	}
+
+	private static VBoxContainer VoiceOptions()
+	{
+		var box = new VBoxContainer { Name = "Voice" };
+		box.AddChild(Section("Voice"));
+		var device = new OptionButton { Name = "VoiceInputDevice" };
+		foreach (var input in AudioServer.GetInputDeviceList()) device.AddItem(input);
+		if (device.ItemCount == 0) device.AddItem("Default");
+		for (var i = 0; i < device.ItemCount; i++)
+			if (device.GetItemText(i) == SettingsManager.Instance.GetVoiceInputDevice()) device.Select(i);
+		device.ItemSelected += index => SettingsManager.Instance.SetVoiceInputDevice(device.GetItemText((int)index));
+		box.AddChild(device);
+		box.AddChild(SliderRow("Voice Gain", SettingsManager.Instance.GetVoiceGain(), 0, 2, .05,
+			SettingsManager.Instance.SetVoiceGain));
+		box.AddChild(SliderRow("Voice VAD Threshold", SettingsManager.Instance.GetVoiceVadThreshold(), 0, 1, .01,
+			SettingsManager.Instance.SetVoiceVadThreshold));
+		box.AddChild(SliderRow("Voice Volume", SettingsManager.Instance.GetVoiceVolume(), 0, 100, 1,
+			SettingsManager.Instance.SetVoiceVolume));
+		box.AddChild(VoiceSelect("VoiceTransmissionMode", new[] { "Push To Talk", "Voice Activity" },
+			SettingsManager.Instance.GetVoiceTransmissionMode(), SettingsManager.Instance.SetVoiceTransmissionMode));
+		box.AddChild(VoiceSelect("VoiceChannel", new[] { "Proximity", "Global" },
+			SettingsManager.Instance.GetVoiceChannel(), SettingsManager.Instance.SetVoiceChannel));
+		var test = new CheckButton { Name = "VoiceMicTest", Text = "Mic Test" };
+		test.Toggled += on => { if (on) PositionalVoiceChat.Instance.StartMicTest(); else PositionalVoiceChat.Instance.StopMicTest(); };
+		box.AddChild(test);
+		return box;
+	}
+
+	private static OptionButton VoiceSelect(string name, string[] choices, int selected, Action<int> callback)
+	{
+		var select = new OptionButton { Name = name };
+		foreach (var choice in choices) select.AddItem(choice);
+		select.Select(Math.Clamp(selected, 0, choices.Length - 1));
+		select.ItemSelected += index => callback((int)index);
+		return select;
 	}
 
 	private void BeginRebind(string action)
