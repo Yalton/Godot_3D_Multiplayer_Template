@@ -186,6 +186,14 @@ policy; `4f38c09` implements roster appearance serialization and local profile p
 procedural cosmetics; and `93a0d39` adds the lobby customization panel. P2b is **shipped**.
 `NetworkBuildInfo.ProtocolVersion` is **9**, bumped for the registration RPC signature.
 
+## P3 voice overhaul — shipped
+
+Protocol 10 provides server-authoritative Opus voice: 16 kHz mono, 320-sample/20-ms frames,
+512-byte packets, 35-m proximity, global routing, and per-peer 50-frame/30-KiB-per-second limits.
+PTT is the default; VAD is opt-in and both are privacy-muted while gameplay input is suppressed.
+`PositionalVoiceChat` owns graphical client capture/decode/playback; headless dedicated servers
+only route validated packets. The managed Concentus codec is the sole codec dependency.
+
 Intentional dirt: the P2b plan is modified with a preflight correction: Task 1 owns minimal
 rig/factory compatibility, nonzero IDs are globally unique, and definitions have pure metadata.
 Preserve and commit that plan amendment.
