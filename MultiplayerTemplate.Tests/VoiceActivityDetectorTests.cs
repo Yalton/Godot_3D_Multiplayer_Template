@@ -19,6 +19,8 @@ public sealed class VoiceActivityDetectorTests
 
         Assert.True(vad.IsActive(LoudFrame()));
         Assert.True(vad.IsActive(SilentFrame()));
+        Assert.True(vad.IsActive(SilentFrame()));
+        Assert.False(vad.IsActive(SilentFrame()));
     }
 
     private static short[] SilentFrame() => new short[320];

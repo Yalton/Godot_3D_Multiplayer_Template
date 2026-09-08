@@ -54,11 +54,13 @@ public sealed class VoiceByteLimiter
         if (bytes < 0) throw new ArgumentOutOfRangeException(nameof(bytes));
 
         var budget = GetBudget(peerId, nowMilliseconds);
-        if (budget.Frames + frames > MaxFrames || budget.Bytes + bytes > MaxBytes)
+        var nextFrames = (long)budget.Frames + frames;
+        var nextBytes = (long)budget.Bytes + bytes;
+        if (nextFrames > MaxFrames || nextBytes > MaxBytes)
             return false;
 
-        budget.Frames += frames;
-        budget.Bytes += bytes;
+        budget.Frames = (int)nextFrames;
+        budget.Bytes = (int)nextBytes;
         return true;
     }
 

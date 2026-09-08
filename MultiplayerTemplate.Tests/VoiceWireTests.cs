@@ -47,12 +47,31 @@ public sealed class VoiceWireTests
     }
 
     [Fact]
+    public void FrameBudgetRejectsOverflowSizedRequest()
+    {
+        var limiter = new VoiceByteLimiter();
+
+        Assert.True(limiter.TryConsume(7, 1, 1, 0));
+        Assert.False(limiter.TryConsume(7, int.MaxValue, 0, 0));
+    }
+
+    [Fact]
     public void ByteBudgetAcceptsThirtyKiBAndRejectsOneMoreByte()
     {
         var limiter = new VoiceByteLimiter();
 
         Assert.True(limiter.TryConsume(7, 1, 30 * 1024, 0));
         Assert.False(limiter.TryConsume(7, 1, 1, 0));
+    }
+
+    [Fact]
+    public void WindowResetsExactlyAtOneSecond()
+    {
+        var limiter = new VoiceByteLimiter();
+
+        Assert.True(limiter.TryConsume(7, 50, 30 * 1024, 0));
+        Assert.False(limiter.TryConsume(7, 1, 1, 999));
+        Assert.True(limiter.TryConsume(7, 1, 1, 1_000));
     }
 
     [Fact]
