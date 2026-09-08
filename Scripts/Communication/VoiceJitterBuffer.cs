@@ -39,6 +39,7 @@ public sealed class VoiceJitterBuffer
             if (_payloads.Count < TargetFrames)
                 return false;
 
+            _nextSequence = OldestBufferedSequence();
             _started = true;
         }
 
@@ -62,5 +63,15 @@ public sealed class VoiceJitterBuffer
         _started = false;
         _hasNextSequence = false;
         _nextSequence = 0;
+    }
+
+    private uint OldestBufferedSequence()
+    {
+        var oldest = _nextSequence;
+        foreach (var sequence in _payloads.Keys)
+            if (VoiceWirePolicy.IsNewerSequence(sequence, oldest))
+                oldest = sequence;
+
+        return oldest;
     }
 }

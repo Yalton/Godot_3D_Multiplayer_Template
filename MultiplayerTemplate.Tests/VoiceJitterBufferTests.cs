@@ -22,6 +22,27 @@ public sealed class VoiceJitterBufferTests
     }
 
     [Fact]
+    public void StartupPlaysReorderedFramesFromTheOldestSequenceWithoutPlc()
+    {
+        var queue = new VoiceJitterBuffer();
+        queue.Enqueue(Packet(12));
+        queue.Enqueue(Packet(10));
+        queue.Enqueue(Packet(11));
+
+        Assert.True(queue.TryTake(out var payload, out var packetLoss));
+        Assert.False(packetLoss);
+        Assert.Equal([10], payload);
+
+        Assert.True(queue.TryTake(out payload, out packetLoss));
+        Assert.False(packetLoss);
+        Assert.Equal([11], payload);
+
+        Assert.True(queue.TryTake(out payload, out packetLoss));
+        Assert.False(packetLoss);
+        Assert.Equal([12], payload);
+    }
+
+    [Fact]
     public void GapRequestsPlcOnceBeforeNextPacket()
     {
         var queue = new VoiceJitterBuffer();
