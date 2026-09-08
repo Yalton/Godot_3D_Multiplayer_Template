@@ -118,3 +118,32 @@ Passed!  - Failed:     0, Passed:    15, Skipped:     0, Total:    15
 - The new VAD test covers the release boundary that the prior test missed, which proves the hangover counter decrements as intended and then goes inactive.
 - The new time-based limiter test verifies the window boundary is inclusive at `1_000` ms, matching the intended one-second budget window.
 - The overflow-sized request test exercises the exact failure case from review instead of relying on a smaller boundary case.
+
+## Fix Round 2
+
+### Findings Addressed
+
+1. Added a byte-overflow regression proof in `MultiplayerTemplate.Tests/VoiceWireTests.cs` that first consumes byte budget and then asserts `TryConsume(..., bytes: int.MaxValue, ...)` rejects. This exercises the byte cap's `long` arithmetic directly, not just the frame path.
+
+### Changed Files
+
+- `MultiplayerTemplate.Tests/VoiceWireTests.cs`
+
+### Focused Verification
+
+Command:
+
+```bash
+dotnet test MultiplayerTemplate.Tests/MultiplayerTemplate.Tests.csproj --filter "FullyQualifiedName~VoiceWireTests|FullyQualifiedName~VoiceFrameAssemblerTests|FullyQualifiedName~VoiceActivityDetectorTests|FullyQualifiedName~VoiceRoutingPolicyTests"
+```
+
+Result:
+
+```text
+Passed!  - Failed:     0, Passed:    16, Skipped:     0, Total:    16
+```
+
+### Why This Fix Is Correct
+
+- The new test uses the byte budget after prior consumption, so it reaches the path where unchecked `int` addition would have wrapped and bypassed the cap.
+- The existing `long` arithmetic in `VoiceByteLimiter` now has direct regression coverage for both the frame and byte budgets.

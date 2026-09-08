@@ -65,6 +65,15 @@ public sealed class VoiceWireTests
     }
 
     [Fact]
+    public void ByteBudgetRejectsOverflowSizedRequestAfterPriorConsumption()
+    {
+        var limiter = new VoiceByteLimiter();
+
+        Assert.True(limiter.TryConsume(7, 0, 1, 0));
+        Assert.False(limiter.TryConsume(7, 0, int.MaxValue, 0));
+    }
+
+    [Fact]
     public void WindowResetsExactlyAtOneSecond()
     {
         var limiter = new VoiceByteLimiter();
