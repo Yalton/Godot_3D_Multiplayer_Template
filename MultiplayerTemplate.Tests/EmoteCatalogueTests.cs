@@ -5,13 +5,18 @@ namespace MultiplayerTemplate.Tests;
 public sealed class EmoteCatalogueTests
 {
     [Fact]
-    public void EveryCatalogueIdResolves()
+    public void ExpectedEmoteIdsResolveToExpectedClips()
     {
-        Assert.NotEmpty(EmoteCatalogue.All);
-        foreach (var entry in EmoteCatalogue.All)
+        var expected = new Dictionary<int, string>
         {
-            Assert.True(EmoteCatalogue.TryGet(entry.Id, out var found));
-            Assert.Equal(entry.Clip, found.Clip);
+            [1] = "emote_wave", [2] = "emote_point", [3] = "emote_clap",
+            [4] = "emote_cheer", [5] = "emote_sit", [6] = "emote_dance"
+        };
+        Assert.Equal(expected.Count, EmoteCatalogue.All.Count);
+        foreach (var (id, clip) in expected)
+        {
+            Assert.True(EmoteCatalogue.TryGet(id, out var found));
+            Assert.Equal(clip, found.Clip);
         }
     }
 

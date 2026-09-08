@@ -155,6 +155,7 @@ public partial class ExpressionWheels : CanvasLayer
 
     private NetworkPlayer? FindLocalPlayer()
     {
+        if (!Multiplayer.HasMultiplayerPeer()) return null;
         var ownId = Multiplayer.GetUniqueId();
         foreach (var node in GetTree().GetNodesInGroup("network_players"))
             if (node is NetworkPlayer player && player.PeerId == ownId) return player;

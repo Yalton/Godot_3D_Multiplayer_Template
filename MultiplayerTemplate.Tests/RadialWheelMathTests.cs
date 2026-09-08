@@ -16,7 +16,7 @@ public sealed class RadialWheelMathTests
     [Fact]
     public void OnTheDeadZoneEdgeSelects()
     {
-        Assert.NotEqual(-1, RadialWheelMath.Select(0f, -Zone, 6, Zone));
+        Assert.Equal(0, RadialWheelMath.Select(0f, -Zone, 6, Zone));
     }
 
     [Fact]

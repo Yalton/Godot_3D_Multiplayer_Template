@@ -414,8 +414,6 @@ public partial class NetworkPlayer : CharacterBody3D
         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void ReceiveEmote(int id)
     {
-        if (!Multiplayer.IsServer())
-            ActiveEmote = EmoteCatalogue.TryGet(id, out var d) && d.Looping ? id : EmoteCatalogue.None;
         PlayEmoteLocally(id);
     }
 
