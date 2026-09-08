@@ -161,6 +161,14 @@ public partial class NetworkSmoke : Node
         {
             FinishAfter(1, FinishDedicated);
         }
+        else if (_role == "teardown-probe")
+        {
+            // Regression probe for #1: install a live ENet peer, then use the production
+            // shutdown path instead of letting engine/CLR teardown own the live peer.
+            SessionManager.Instance.PlayerName = "TeardownProbe";
+            SessionManager.Instance.HostEnet(Port + 4);
+            FinishAfter(0.5, FinishTeardownProbe);
+        }
         else if (_role == "kick-server")
         {
             SessionManager.Instance.PlayerName = "KickHost";
@@ -789,6 +797,18 @@ public partial class NetworkSmoke : Node
               $"badRefused={_sawBadEmoteRefused}, proofApplied={_sawProofEmoteApplied}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
+    }
+
+    private void FinishTeardownProbe()
+    {
+        var success = !GetTree().AutoAcceptQuit &&
+                      Multiplayer.HasMultiplayerPeer() &&
+                      Multiplayer.MultiplayerPeer?.GetConnectionStatus() ==
+                      MultiplayerPeer.ConnectionStatus.Connected;
+        GD.Print(success
+            ? "SMOKE TEARDOWN PASS (live ENet peer entered the graceful exit path)"
+            : "SMOKE TEARDOWN FAIL (no live ENet peer before graceful exit)");
+        SessionManager.Instance.QuitAfterDisconnect(success ? 0 : 1);
     }
 
     private void FinishEmoteLate()

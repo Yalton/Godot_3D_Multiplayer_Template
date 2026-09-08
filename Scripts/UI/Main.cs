@@ -365,8 +365,7 @@ public partial class Main : Node
 	// remote peers only notice via timeout.
 	private void QuitGame()
 	{
-		SessionManager.Instance.DisconnectSession(false);
-		GetTree().Quit();
+		SessionManager.Instance.QuitAfterDisconnect();
 	}
 
 	private void HostLan() { CaptureIdentity(); SessionManager.Instance.HostEnet(); }

@@ -36,6 +36,7 @@ public partial class SessionManager : Node
     public bool MatchActive { get; private set; }
     public bool IsDedicatedServer { get; private set; }
     public SessionState State { get; private set; } = SessionState.Offline;
+    private bool _quitRequested;
     // Test harness seam. Production callers should leave this at zero.
     public int ProtocolVersionOverrideForTesting { get; set; }
     public EnetTransport Enet { get; private set; } = null!;
@@ -44,6 +45,10 @@ public partial class SessionManager : Node
     public override void _Ready()
     {
         Instance = this;
+        // A window-manager close request must pass through QuitAfterDisconnect(); otherwise
+        // Godot may set the quit flag before the detached multiplayer peer gets one frame to
+        // settle, leaving native engine/CLR teardown to race a live network session.
+        GetTree().AutoAcceptQuit = false;
         DebugLogger.Instance.RegisterModule(LogModule, true);
         DebugLogger.Instance.RegisterModule("RpcSecurity", true);
         Enet = new EnetTransport();
@@ -172,6 +177,19 @@ public partial class SessionManager : Node
         RosterChanged?.Invoke(Players);
         MatchEnded?.Invoke();
         if (emitState) ConnectionStateChanged?.Invoke("menu", "Disconnected.");
+    }
+
+    /// <summary>
+    /// Ends a networked process without leaving a live peer for native engine/CLR teardown.
+    /// The frame boundary gives Godot a chance to process the peer detachment before quitting.
+    /// </summary>
+    public async void QuitAfterDisconnect(int exitCode = 0)
+    {
+        if (_quitRequested) return;
+        _quitRequested = true;
+        DisconnectSession(false);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        GetTree().Quit(exitCode);
     }
 
     public string DisplayName(long peerId) =>
@@ -523,8 +541,7 @@ public partial class SessionManager : Node
     public override void _Notification(int what)
     {
         if (what != NotificationWMCloseRequest) return;
-        DisconnectSession(false);
-        GetTree().Quit();
+        QuitAfterDisconnect();
     }
 
     private static int ArgumentInt(string[] args, string prefix, int fallback)

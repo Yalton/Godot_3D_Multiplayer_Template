@@ -65,6 +65,13 @@ if (( result == 0 )); then
   grep -h "SMOKE" "$loss_dir/dedicated.log" || true
   if grep -E "ERROR:|SMOKE .* FAIL" "$loss_dir/dedicated.log"; then result=1; fi
 
+  teardown_dir="$(mktemp -d)"
+  timeout --kill-after=5s 45s godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+    --smoke-role=teardown-probe >"$teardown_dir/teardown.log" 2>&1 || result=1
+  grep -h "SMOKE" "$teardown_dir/teardown.log" || true
+  if ! grep -q "SMOKE TEARDOWN PASS" "$teardown_dir/teardown.log" ||
+     grep -E "ERROR:|SMOKE .* FAIL" "$teardown_dir/teardown.log"; then result=1; fi
+
   kick_dir="$(mktemp -d)"
   timeout --kill-after=5s 45s godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
     --smoke-role=kick-server >"$kick_dir/server.log" 2>&1 &
