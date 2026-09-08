@@ -795,6 +795,10 @@ public partial class NetworkSmoke : Node
             ? "SMOKE EMOTE LATE PASS (late joiner saw the sitter already emoting)"
             : $"SMOKE EMOTE LATE FAIL playing={_sawPlaying}, " +
               $"sitterSpawned={_sawLateJoinSpawnedSitterNode}, sawEmote={_sawLateJoinEmote}");
+        // The shell supervisor owns this peer's lifetime in the multi-process emote rig.
+        // Avoiding a concurrent native ENet/engine teardown is intentional; it kills us after
+        // observing the definitive marker, matching Sundering's headless-match convention.
+        if (OS.GetEnvironment("SMOKE_SUPERVISED") == "1") return;
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }

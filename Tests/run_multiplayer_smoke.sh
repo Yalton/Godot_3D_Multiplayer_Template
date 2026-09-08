@@ -96,13 +96,21 @@ if (( result == 0 )); then
   # 5.5s before cancelling — this stagger lands emote-late's join comfortably inside
   # that window so it snapshots the sit in progress rather than racing the cancel.
   sleep 2.5
-  godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
+  SMOKE_SUPERVISED=1 godot --headless --path "$project_dir" tests/network_smoke.tscn -- \
     --smoke-role=emote-late >"$emote_dir/late.log" 2>&1 &
   emote_late=$!
+  for _ in $(seq 1 100); do
+    grep -q "SMOKE EMOTE LATE" "$emote_dir/late.log" && break
+    sleep 0.1
+  done
+  if ! grep -q "SMOKE EMOTE LATE PASS" "$emote_dir/late.log"; then result=1; fi
+  kill -9 "$emote_late" 2>/dev/null || true
+  wait "$emote_late" 2>/dev/null || true
+  emote_late=""
   wait "$emote_server" || result=1
   wait "$emote_a" || result=1
   wait "$emote_b" || result=1
-  wait "$emote_late" || result=1
+  [[ -z "$emote_late" ]] || wait "$emote_late" || result=1
   grep -h "SMOKE" "$emote_dir"/*.log || true
   if grep -E "ERROR:|SMOKE .* FAIL" "$emote_dir"/*.log; then result=1; fi
 fi
