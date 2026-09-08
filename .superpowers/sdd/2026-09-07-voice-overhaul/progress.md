@@ -27,3 +27,5 @@ Task 2: fix round 1/5 (reordered jitter startup selected first arrival; correcte
 Task 2: complete (commits 794d0e5..cda6f17, review clean)
 
 Task 3: complete (persisted voice preferences, portable VoiceSettingsPolicy, and Master-routed Voice bus; scoped review/fix/re-review clean). Deferred integration note: Task 4 owns removing PositionalVoiceChat's current input-device reset so it applies SettingsManager's persisted device.
+
+Task 4: complete (Opus capture/playback pipeline, PTT/VAD, Voice bus, mic-test/meter, bounded receive state; privacy and headless review fixes re-reviewed clean). Task 5 owns the primitive packet RPC, channel-aware playback, and authoritative routing.

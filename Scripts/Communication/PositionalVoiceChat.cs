@@ -2,6 +2,7 @@ using Godot;
 using MultiplayerTemplate.Game;
 using MultiplayerTemplate.Network;
 using MultiplayerTemplate.UI;
+using SettingsKit;
 
 namespace MultiplayerTemplate.Communication;
 
@@ -15,6 +16,7 @@ public partial class PositionalVoiceChat : Node
 {
     public static PositionalVoiceChat Instance { get; private set; } = null!;
     public bool ClientCaptureEnabled => _captureAvailable;
+    public float VoiceCaptureMeter { get; private set; }
 
     public bool IsSpeaking(long peerId) =>
         _speaking.IsSpeaking(peerId, Time.GetTicksMsec() / 1000.0);
@@ -29,15 +31,23 @@ public partial class PositionalVoiceChat : Node
         if (_speakers.TryGetValue(peerId, out var speaker))
             speaker.VolumeDb = VoiceVolumePolicy.ToDecibels(clamped);
     }
-    private const int CaptureFrames = 960;
     private const int PlaybackRate = 16000;
     private AudioEffectCapture? _capture;
     private AudioStreamPlayer? _micPump;
+    private AudioStreamPlayer? _micTestPlayer;
     private VoiceResampler? _resampler;
+    private readonly VoiceFrameAssembler _frameAssembler = new();
+    private IVoiceCodec? _encoder;
+    private VoiceActivityDetector _vad = new(VoiceSettingsPolicy.DefaultVadThreshold, 2);
+    private float _vadThreshold = VoiceSettingsPolicy.DefaultVadThreshold;
     private readonly System.Collections.Generic.Dictionary<long, AudioStreamPlayer3D> _speakers = new();
+    private readonly System.Collections.Generic.Dictionary<long, VoiceJitterBuffer> _jitterBuffers = new();
+    private readonly System.Collections.Generic.Dictionary<long, IVoiceCodec> _decoders = new();
+    private readonly System.Collections.Generic.Dictionary<long, uint> _legacyReceiveSequences = new();
     private readonly RpcRateLimiter _rateLimiter = new();
     private readonly SpeakingTracker _speaking = new();
     private bool _captureAvailable;
+    private bool _micTestActive;
 
     public override void _Ready()
     {
@@ -50,7 +60,8 @@ public partial class PositionalVoiceChat : Node
             return;
         }
         _captureAvailable = true;
-        AudioServer.InputDevice = "Default";
+        _encoder = new OpusVoiceCodec();
+        AudioServer.InputDevice = SettingsManager.Instance.GetVoiceInputDevice();
         var bus = AudioServer.BusCount;
         AudioServer.AddBus(bus);
         AudioServer.SetBusName(bus, "VoiceCapture");
@@ -64,15 +75,37 @@ public partial class PositionalVoiceChat : Node
             Bus = "VoiceCapture"
         };
         AddChild(_micPump);
+        _micTestPlayer = new AudioStreamPlayer
+        {
+            Stream = new AudioStreamGenerator { MixRate = PlaybackRate, BufferLength = 0.25f },
+            Bus = "Voice"
+        };
+        AddChild(_micTestPlayer);
         SessionManager.Instance.MatchStarted += StartCapture;
     }
 
     private void StartCapture()
     {
         if (_micPump == null || _micPump.Playing) return;
-        _capture?.ClearBuffer();
-        _resampler?.Reset();
+        ResetCaptureState();
         _micPump.Play();
+    }
+
+    public void StartMicTest()
+    {
+        if (!_captureAvailable || _micTestActive) return;
+        StopCapture();
+        _micTestActive = true;
+        StartCapture();
+        _micTestPlayer?.Play();
+    }
+
+    public void StopMicTest()
+    {
+        if (!_micTestActive) return;
+        _micTestActive = false;
+        _micTestPlayer?.Stop();
+        StopCapture();
     }
 
     public override void _ExitTree()
@@ -87,10 +120,13 @@ public partial class PositionalVoiceChat : Node
 
     private void OnMatchEnded()
     {
-        _micPump?.Stop();
-        _capture?.ClearBuffer();
+        StopMicTest();
+        StopCapture();
         foreach (var speaker in _speakers.Values) speaker.QueueFree();
         _speakers.Clear();
+        _jitterBuffers.Clear();
+        _decoders.Clear();
+        _legacyReceiveSequences.Clear();
         _speaking.Clear();
     }
 
@@ -98,30 +134,53 @@ public partial class PositionalVoiceChat : Node
     {
         _rateLimiter.Forget(peerId);
         if (_speakers.Remove(peerId, out var speaker)) speaker.QueueFree();
+        _jitterBuffers.Remove(peerId);
+        _decoders.Remove(peerId);
+        _legacyReceiveSequences.Remove(peerId);
         _speaking.Remove(peerId);
     }
 
     public override void _Process(double delta)
     {
         UpdateSpeakerPositions();
-        if (!_captureAvailable || !Multiplayer.HasMultiplayerPeer() || !SessionManager.Instance.MatchActive ||
-            LocalInputContext.Instance.GameplaySuppressed ||
-            !Input.IsActionPressed("push_to_talk") || _capture == null || _resampler == null) return;
-        while (_capture.CanGetBuffer(CaptureFrames))
+        if (!_captureAvailable || _capture == null || _resampler == null) return;
+
+        var inputDevice = SettingsManager.Instance.GetVoiceInputDevice();
+        if (AudioServer.InputDevice != inputDevice)
         {
-            var stereo = _capture.GetBuffer(CaptureFrames);
+            AudioServer.InputDevice = inputDevice;
+            ResetCaptureState();
+        }
+
+        var canTransmit = Multiplayer.HasMultiplayerPeer() &&
+            SessionManager.Instance.State == SessionManager.SessionState.Playing &&
+            !LocalInputContext.Instance.GameplaySuppressed;
+        if (!canTransmit && !_micTestActive)
+        {
+            if (_micPump?.Playing == true)
+                StopCapture();
+            return;
+        }
+        StartCapture();
+
+        while (_capture.CanGetBuffer(960))
+        {
+            var stereo = _capture.GetBuffer(960);
             var mono = new float[stereo.Length];
-            for (var i = 0; i < stereo.Length; i++) mono[i] = (stereo[i].X + stereo[i].Y) * 0.5f;
+            var gain = SettingsManager.Instance.GetVoiceGain();
+            for (var i = 0; i < stereo.Length; i++) mono[i] = (stereo[i].X + stereo[i].Y) * 0.5f * gain;
             var samples = _resampler.Process(mono);
-            if (samples.Length == 0) continue;
-            var pcm = new byte[samples.Length * 2];
-            for (var i = 0; i < samples.Length; i++)
+            foreach (var frame in _frameAssembler.Push(samples))
             {
-                pcm[i * 2] = (byte)(samples[i] & 0xff);
-                pcm[i * 2 + 1] = (byte)((samples[i] >> 8) & 0xff);
+                VoiceCaptureMeter = ComputeRms(frame);
+                if (_micTestActive)
+                    PushSamples(_micTestPlayer, frame);
+                if (!canTransmit || _micTestActive || !ShouldTransmit(frame)) continue;
+                var encoded = _encoder?.Encode(frame) ?? [];
+                if (encoded.Length == 0) continue;
+                if (Multiplayer.IsServer()) RelayVoice(Multiplayer.GetUniqueId(), encoded);
+                else RpcId(1, nameof(SubmitVoice), encoded);
             }
-            if (Multiplayer.IsServer()) RelayVoice(Multiplayer.GetUniqueId(), pcm);
-            else RpcId(1, nameof(SubmitVoice), pcm);
         }
     }
 
@@ -155,23 +214,30 @@ public partial class PositionalVoiceChat : Node
         if (peerId != Multiplayer.GetUniqueId()) PlayPacket(peerId, pcm);
     }
 
-    private void PlayPacket(long peerId, byte[] pcm)
+    private void PlayPacket(long peerId, byte[] payload)
     {
-        if (peerId == Multiplayer.GetUniqueId() || IsLocallyMuted(peerId) || pcm.Length % 2 != 0) return;
+        if (!_captureAvailable || peerId == Multiplayer.GetUniqueId() || IsLocallyMuted(peerId)) return;
         // Without a body to attach to, the speaker would sit at the world origin.
         if (FindPlayer(peerId) is not { } body) return;
-        _speaking.NotePacket(peerId, Time.GetTicksMsec() / 1000.0);
-        var player = EnsureSpeaker(peerId);
-        player.GlobalPosition = body.GlobalPosition + Vector3.Up * 1.5f;
-        if (player.GetStreamPlayback() is not AudioStreamGeneratorPlayback playback) return;
-        var frames = new Vector2[pcm.Length / 2];
-        for (var i = 0; i < frames.Length; i++)
+        var sequence = _legacyReceiveSequences.TryGetValue(peerId, out var previous)
+            ? previous
+            : 0;
+        _legacyReceiveSequences[peerId] = unchecked(sequence + 1);
+        var packet = new VoicePacket(VoiceWirePolicy.FormatVersion, VoiceChannel.Proximity, sequence, payload);
+        if (!_jitterBuffers.TryGetValue(peerId, out var jitter))
+            _jitterBuffers[peerId] = jitter = new VoiceJitterBuffer();
+        if (!_decoders.TryGetValue(peerId, out var decoder))
+            _decoders[peerId] = decoder = new OpusVoiceCodec();
+        jitter.Enqueue(packet);
+        while (jitter.TryTake(out var next, out var packetLoss))
         {
-            var sample = (short)(pcm[i * 2] | (pcm[i * 2 + 1] << 8));
-            var value = sample / 32768f;
-            frames[i] = new Vector2(value, value);
+            var frame = decoder.Decode(next, packetLoss);
+            if (frame.Length == 0) continue;
+            _speaking.NotePacket(peerId, Time.GetTicksMsec() / 1000.0);
+            var player = EnsureSpeaker(peerId);
+            player.GlobalPosition = body.GlobalPosition + Vector3.Up * 1.5f;
+            PushSamples(player, frame);
         }
-        if (playback.GetFramesAvailable() >= frames.Length) playback.PushBuffer(frames);
     }
 
     private AudioStreamPlayer3D EnsureSpeaker(long peerId)
@@ -180,6 +246,7 @@ public partial class PositionalVoiceChat : Node
         var speaker = new AudioStreamPlayer3D
         {
             Stream = new AudioStreamGenerator { MixRate = PlaybackRate, BufferLength = 0.25f },
+            Bus = "Voice",
             UnitSize = 8f,
             MaxDistance = 35f,
             AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.InverseDistance
@@ -211,5 +278,71 @@ public partial class PositionalVoiceChat : Node
         var identity = PlayerIdentity.FromDictionary(peerId, data);
         return PlayerIdentityService.Instance.IsMuted(identity) ||
             PlayerIdentityService.Instance.IsBlocked(identity);
+    }
+
+    private bool ShouldTransmit(short[] frame)
+    {
+        if (SettingsManager.Instance.GetVoiceTransmissionMode() == (int)VoiceTransmissionMode.PushToTalk)
+            return Input.IsActionPressed("push_to_talk");
+
+        var threshold = SettingsManager.Instance.GetVoiceVadThreshold();
+        if (!Mathf.IsEqualApprox(threshold, _vadThreshold))
+        {
+            _vadThreshold = threshold;
+            _vad = new VoiceActivityDetector(threshold, 2);
+        }
+        return _vad.IsActive(frame);
+    }
+
+    private void ResetCaptureState()
+    {
+        _capture?.ClearBuffer();
+        _resampler?.Reset();
+        _frameAssembler.Reset();
+        _vadThreshold = SettingsManager.Instance.GetVoiceVadThreshold();
+        _vad = new VoiceActivityDetector(_vadThreshold, 2);
+        VoiceCaptureMeter = 0f;
+    }
+
+    private void StopCapture()
+    {
+        _micPump?.Stop();
+        ResetCaptureState();
+    }
+
+    private static float ComputeRms(ReadOnlySpan<short> samples)
+    {
+        if (samples.Length == 0) return 0f;
+        double sumSquares = 0;
+        foreach (var sample in samples)
+        {
+            var normalized = sample / (double)short.MaxValue;
+            sumSquares += normalized * normalized;
+        }
+        return (float)Math.Sqrt(sumSquares / samples.Length);
+    }
+
+    private static void PushSamples(AudioStreamPlayer? player, short[] samples)
+    {
+        if (player?.GetStreamPlayback() is not AudioStreamGeneratorPlayback playback) return;
+        PushSamples(playback, samples);
+    }
+
+    private static void PushSamples(AudioStreamPlayer3D player, short[] samples)
+    {
+        if (player.GetStreamPlayback() is not AudioStreamGeneratorPlayback playback) return;
+        PushSamples(playback, samples);
+    }
+
+    private static void PushSamples(AudioStreamGeneratorPlayback playback, short[] samples)
+    {
+        if (playback.GetFramesAvailable() < samples.Length) return;
+        var frames = new Vector2[samples.Length];
+        for (var i = 0; i < samples.Length; i++)
+        {
+            var value = samples[i] / 32768f;
+            frames[i] = new Vector2(value, value);
+        }
+        playback.PushBuffer(frames);
     }
 }
