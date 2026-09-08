@@ -24,12 +24,19 @@ public partial class SettingsManager : Node
 	private int _musicBus = -1;
 	private int _sfxBus = -1;
 	private int _ambienceBus = -1;
+	private int _voiceBus = -1;
 
 	// Default settings
 	private const float DEFAULT_MASTER_VOLUME = 100.0f;
 	private const float DEFAULT_MUSIC_VOLUME = 100.0f;
 	private const float DEFAULT_SFX_VOLUME = 100.0f;
 	private const float DEFAULT_AMBIENCE_VOLUME = 100.0f;
+	private const string DEFAULT_VOICE_INPUT_DEVICE = VoiceSettingsPolicy.DefaultInputDevice;
+	private const float DEFAULT_VOICE_GAIN = VoiceSettingsPolicy.DefaultGain;
+	private const int DEFAULT_VOICE_TRANSMISSION_MODE = VoiceSettingsPolicy.DefaultTransmissionMode;
+	private const float DEFAULT_VOICE_VAD_THRESHOLD = VoiceSettingsPolicy.DefaultVadThreshold;
+	private const int DEFAULT_VOICE_CHANNEL = VoiceSettingsPolicy.DefaultChannel;
+	private const float DEFAULT_VOICE_VOLUME = VoiceSettingsPolicy.DefaultVolume;
 	private const float DEFAULT_MOUSE_SENSITIVITY = 37.5f;
 	private const float DEFAULT_FOV = 80.0f;
 	private const int DEFAULT_CAMERA_MODE = 0;
@@ -171,11 +178,21 @@ public partial class SettingsManager : Node
 			AudioServer.SetBusSend(ambienceBusIdx, "Master");
 		}
 
+		if (AudioServer.GetBusIndex("Voice") == -1)
+		{
+			AudioServer.AddBus();
+			int voiceBusIdx = AudioServer.BusCount - 1;
+			AudioServer.SetBusName(voiceBusIdx, "Voice");
+			AudioServer.SetBusSend(voiceBusIdx, "Master");
+		}
+
 		_masterBus = AudioServer.GetBusIndex("Master");
 		if (_masterBus < 0) _masterBus = 0;
 		_musicBus = AudioServer.GetBusIndex("Music");
 		_sfxBus = AudioServer.GetBusIndex("SFX");
 		_ambienceBus = AudioServer.GetBusIndex("Ambience");
+		_voiceBus = AudioServer.GetBusIndex("Voice");
+		AudioServer.SetBusSend(_voiceBus, "Master");
 	}
 
 	// Load settings from cached config file. Every key falls back to its default
@@ -201,6 +218,8 @@ public partial class SettingsManager : Node
 				AudioServer.SetBusVolumeDb(_musicBus, Mathf.LinearToDb(musicVolume / 100));
 				AudioServer.SetBusVolumeDb(_sfxBus, Mathf.LinearToDb(sfxVolume / 100));
 				AudioServer.SetBusVolumeDb(_ambienceBus, Mathf.LinearToDb(ambienceVolume / 100));
+				AudioServer.SetBusVolumeDb(_voiceBus, Mathf.LinearToDb(GetVoiceVolume() / 100));
+				AudioServer.InputDevice = GetVoiceInputDevice();
 
 				// Load and apply video settings
 				bool vsync = (bool)_config.GetValue("video", "vsync", DEFAULT_VSYNC);
@@ -320,6 +339,8 @@ public partial class SettingsManager : Node
 		AudioServer.SetBusVolumeDb(_musicBus, Mathf.LinearToDb(DEFAULT_MUSIC_VOLUME / 100));
 		AudioServer.SetBusVolumeDb(_sfxBus, Mathf.LinearToDb(DEFAULT_SFX_VOLUME / 100));
 		AudioServer.SetBusVolumeDb(_ambienceBus, Mathf.LinearToDb(DEFAULT_AMBIENCE_VOLUME / 100));
+		AudioServer.SetBusVolumeDb(_voiceBus, Mathf.LinearToDb(DEFAULT_VOICE_VOLUME / 100));
+		AudioServer.InputDevice = DEFAULT_VOICE_INPUT_DEVICE;
 		SetVsync(DEFAULT_VSYNC);
 		SetFullscreenMode(DEFAULT_FULLSCREEN_MODE);
 		SetResolution(DEFAULT_RESOLUTION);
@@ -353,6 +374,12 @@ public partial class SettingsManager : Node
 		_config.SetValue("audio", "music_volume", DEFAULT_MUSIC_VOLUME);
 		_config.SetValue("audio", "sfx_volume", DEFAULT_SFX_VOLUME);
 		_config.SetValue("audio", "ambience_volume", DEFAULT_AMBIENCE_VOLUME);
+		_config.SetValue("audio", "voice_input_device", DEFAULT_VOICE_INPUT_DEVICE);
+		_config.SetValue("audio", "voice_gain", DEFAULT_VOICE_GAIN);
+		_config.SetValue("audio", "voice_transmission_mode", DEFAULT_VOICE_TRANSMISSION_MODE);
+		_config.SetValue("audio", "voice_vad_threshold", DEFAULT_VOICE_VAD_THRESHOLD);
+		_config.SetValue("audio", "voice_channel", DEFAULT_VOICE_CHANNEL);
+		_config.SetValue("audio", "voice_volume", DEFAULT_VOICE_VOLUME);
 		_config.SetValue("video", "vsync", DEFAULT_VSYNC);
 		_config.SetValue("video", "fullscreen_mode", DEFAULT_FULLSCREEN_MODE);
 		_config.SetValue("video", "resolution", DEFAULT_RESOLUTION);
@@ -594,6 +621,79 @@ public partial class SettingsManager : Node
 		SaveSetting("audio", "ambience_volume", volume);
 	}
 
+	public string GetVoiceInputDevice()
+	{
+		var device = (string)_config.GetValue("audio", "voice_input_device", DEFAULT_VOICE_INPUT_DEVICE);
+		if (device == DEFAULT_VOICE_INPUT_DEVICE)
+			return device;
+		foreach (var available in AudioServer.GetInputDeviceList())
+		{
+			if (available == device)
+				return device;
+		}
+		return DEFAULT_VOICE_INPUT_DEVICE;
+	}
+
+	public void SetVoiceInputDevice(string device)
+	{
+		if (string.IsNullOrWhiteSpace(device))
+			device = DEFAULT_VOICE_INPUT_DEVICE;
+		foreach (var available in AudioServer.GetInputDeviceList())
+		{
+			if (available == device)
+			{
+				AudioServer.InputDevice = device;
+				SaveSetting("audio", "voice_input_device", device);
+				return;
+			}
+		}
+		AudioServer.InputDevice = DEFAULT_VOICE_INPUT_DEVICE;
+		SaveSetting("audio", "voice_input_device", DEFAULT_VOICE_INPUT_DEVICE);
+	}
+
+	public float GetVoiceGain() => VoiceSettingsPolicy.ClampGain(
+		(float)_config.GetValue("audio", "voice_gain", DEFAULT_VOICE_GAIN));
+
+	public void SetVoiceGain(float gain) => SaveSetting("audio", "voice_gain", VoiceSettingsPolicy.ClampGain(gain));
+
+	public int GetVoiceTransmissionMode()
+	{
+		var mode = (int)_config.GetValue("audio", "voice_transmission_mode", DEFAULT_VOICE_TRANSMISSION_MODE);
+		return VoiceSettingsPolicy.NormalizeTransmissionMode(mode);
+	}
+
+	public void SetVoiceTransmissionMode(int mode)
+	{
+		SaveSetting("audio", "voice_transmission_mode", VoiceSettingsPolicy.NormalizeTransmissionMode(mode));
+	}
+
+	public float GetVoiceVadThreshold() => VoiceSettingsPolicy.ClampVadThreshold(
+		(float)_config.GetValue("audio", "voice_vad_threshold", DEFAULT_VOICE_VAD_THRESHOLD));
+
+	public void SetVoiceVadThreshold(float threshold) =>
+		SaveSetting("audio", "voice_vad_threshold", VoiceSettingsPolicy.ClampVadThreshold(threshold));
+
+	public int GetVoiceChannel()
+	{
+		var channel = (int)_config.GetValue("audio", "voice_channel", DEFAULT_VOICE_CHANNEL);
+		return VoiceSettingsPolicy.NormalizeChannel(channel);
+	}
+
+	public void SetVoiceChannel(int channel)
+	{
+		SaveSetting("audio", "voice_channel", VoiceSettingsPolicy.NormalizeChannel(channel));
+	}
+
+	public float GetVoiceVolume() => VoiceSettingsPolicy.ClampVolume(
+		(float)_config.GetValue("audio", "voice_volume", DEFAULT_VOICE_VOLUME));
+
+	public void SetVoiceVolume(float volume)
+	{
+		volume = VoiceSettingsPolicy.ClampVolume(volume);
+		AudioServer.SetBusVolumeDb(_voiceBus, Mathf.LinearToDb(volume / 100));
+		SaveSetting("audio", "voice_volume", volume);
+	}
+
 	// Mouse sensitivity methods (clamped so a corrupted file cannot zero or explode
 	// look input)
 	public float GetMouseSensitivity()
@@ -673,6 +773,12 @@ public partial class SettingsManager : Node
 		_config.SetValue("audio", "music_volume", GetMusicVolume());
 		_config.SetValue("audio", "sfx_volume", GetSfxVolume());
 		_config.SetValue("audio", "ambience_volume", GetAmbienceVolume());
+		_config.SetValue("audio", "voice_input_device", GetVoiceInputDevice());
+		_config.SetValue("audio", "voice_gain", GetVoiceGain());
+		_config.SetValue("audio", "voice_transmission_mode", GetVoiceTransmissionMode());
+		_config.SetValue("audio", "voice_vad_threshold", GetVoiceVadThreshold());
+		_config.SetValue("audio", "voice_channel", GetVoiceChannel());
+		_config.SetValue("audio", "voice_volume", GetVoiceVolume());
 		_config.SetValue("video", "vsync", GetVsync());
 		_config.SetValue("video", "fullscreen_mode", GetFullscreenMode());
 		_config.SetValue("video", "resolution", GetCurrentResolution());

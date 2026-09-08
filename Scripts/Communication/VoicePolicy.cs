@@ -1,5 +1,11 @@
 namespace MultiplayerTemplate.Communication;
 
+public enum VoiceTransmissionMode
+{
+    PushToTalk = 0,
+    VoiceActivity = 1,
+}
+
 /// <summary>
 /// Per-peer listening gain rules. Pure and engine-free so it can be unit tested;
 /// must not reference the Godot namespace.

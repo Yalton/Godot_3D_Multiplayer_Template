@@ -7,6 +7,9 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Concentus" Version="2.2.2" />
+  </ItemGroup>
+  <ItemGroup>
     <Compile Remove="MultiplayerTemplate.Tests/**/*.cs" />
     <!-- Git worktrees and agent scratch live under .claude/. A worktree there holds a
          second full copy of this project; without this exclusion the editor build sees

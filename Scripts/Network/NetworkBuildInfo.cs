@@ -5,7 +5,7 @@ namespace MultiplayerTemplate.Network;
 public static class NetworkBuildInfo
 {
     // Increment whenever an RPC signature, replicated payload, or connection flow changes.
-    public const int ProtocolVersion = 9;
+    public const int ProtocolVersion = 10;
 
     public static string GameVersion =>
         ProjectSettings.GetSetting("application/config/version", "0.1.0").AsString();

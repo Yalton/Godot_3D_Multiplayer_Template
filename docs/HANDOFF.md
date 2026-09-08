@@ -186,6 +186,14 @@ policy; `4f38c09` implements roster appearance serialization and local profile p
 procedural cosmetics; and `93a0d39` adds the lobby customization panel. P2b is **shipped**.
 `NetworkBuildInfo.ProtocolVersion` is **9**, bumped for the registration RPC signature.
 
+## P3 voice overhaul — shipped
+
+Protocol 10 provides server-authoritative Opus voice: 16 kHz mono, 320-sample/20-ms frames,
+512-byte packets, 35-m proximity, global routing, and per-peer 50-frame/30-KiB-per-second limits.
+PTT is the default; VAD is opt-in and both are privacy-muted while gameplay input is suppressed.
+`PositionalVoiceChat` owns graphical client capture/decode/playback; headless dedicated servers
+only route validated packets. The managed Concentus codec is the sole codec dependency.
+
 Intentional dirt: the P2b plan is modified with a preflight correction: Task 1 owns minimal
 rig/factory compatibility, nonzero IDs are globally unique, and definitions have pure metadata.
 Preserve and commit that plan amendment.
@@ -224,3 +232,34 @@ rejection instead of exercising the limiter. The smoke harness now waits for tha
 re-enters its guarded ready path when it finishes. Re-review of the synchronization fix was
 clean. The physical-path all-tests wrapper passed at the final head: 128 unit tests and all 13
 multiplayer scenarios. P2b is ready for integration.
+
+## P3 resume — 2026-09-08
+
+P3's approved design and execution plan are
+`docs/superpowers/specs/2026-09-07-voice-overhaul-design.md` and
+`docs/superpowers/plans/2026-09-07-voice-overhaul.md`. The branch is
+`feature/voice-overhaul` in the sibling worktree
+`/data/fast/Projects/Tech/Games/Godot/3DMultiplayerTemplate-p3-voice-overhaul`.
+Do not create an in-project worktree: Godot can discover its duplicate project even when C# file
+exclusions are present.
+
+The user approved one exception to the no-NuGet rule: managed-only `Concentus` 2.2.2 for Opus.
+Do not add `Concentus.Native`, another package, addon, or binary asset. PTT remains default; VAD
+is opt-in; each player chooses their outgoing proximity/global channel in Audio settings. P3 will
+bump the protocol from 9 to 10 exactly once, in plan Task 5.
+
+Completed and reviewed:
+
+- Task 1 (`900d511`, `6b1ebb4`, `794d0e5`): pure voice wire, exact 16-kHz/320-sample framing,
+  VAD, routing, and overflow-safe 50-frame/30-KiB budgets. Final focused suite: 16 passing.
+- Task 2 (`e3d2ae3`, `cda6f17`): managed Opus codec and bounded jitter buffer. Its first review
+  found an out-of-order startup bug; the fix selects the wrap-aware oldest packet, and the scoped
+  re-review passed. Full unit suite at this head: 155 passing.
+
+The plan-scoped ignored ledger is
+`.superpowers/sdd/2026-09-07-voice-overhaul/progress.md`; update it before continuing. Task 3 is
+next and has **not** started: add persisted voice preferences and a Voice bus in
+`addons/SettingsManager/SettingsManager.cs` with pure policy tests. Then follow Tasks 4–7 in order:
+client Opus pipeline, protocol-10 authoritative routing, Audio-tab settings/mic test, and final
+documentation/proof. The baseline at `7daab92` was green: 128 unit tests, 13 smoke scenarios, and
+`MULTIPLAYER HARNESS PASS`. Run the final physical-path wrapper from this sibling worktree.

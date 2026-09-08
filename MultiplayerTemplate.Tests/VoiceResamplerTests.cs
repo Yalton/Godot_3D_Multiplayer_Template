@@ -40,6 +40,17 @@ public sealed class VoiceResamplerTests
     }
 
     [Fact]
+    public void FractionalRateBuffersStillEmitExactVoiceFrames()
+    {
+        var source = new VoiceResampler(44100, 16000);
+        var frames = new VoiceFrameAssembler();
+        var output = frames.Push(source.Process(new float[960]));
+        Assert.Single(output);
+        Assert.All(output, frame =>
+            Assert.Equal(VoiceWirePolicy.FrameSamples, frame.Length));
+    }
+
+    [Fact]
     public void ConstantSignalStaysConstantAcrossBufferBoundaries()
     {
         var resampler = new VoiceResampler(44100, 16000);

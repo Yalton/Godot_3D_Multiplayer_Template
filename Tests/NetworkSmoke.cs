@@ -76,6 +76,9 @@ public partial class NetworkSmoke : Node
     private bool _appearanceCrossSlotRefused;
     private bool _appearanceRateLimited;
     private bool _profilePersistencePassed;
+    private bool _voiceGlobalDelivered;
+    private bool _voiceProbeStarted;
+    private bool _voiceProximityRouted;
 
     public override void _Ready()
     {
@@ -92,7 +95,13 @@ public partial class NetworkSmoke : Node
             {
                 _ = VerifyAppearancePanelTeardownAfterStateChange();
                 SubmitFeatureChecks();
+                if (_role == "server") _ = MoveClientBOutsideVoiceRange();
                 RequestPlayingAppearanceProbeIfReady();
+                if (_role == "client" && _clientName == "ClientA" && !_voiceProbeStarted)
+                {
+                    _voiceProbeStarted = true;
+                    _ = DriveVoiceProbe();
+                }
             }
         };
         TextChatManager.Instance.MessageReceived += (_, _, text) =>
@@ -222,6 +231,11 @@ public partial class NetworkSmoke : Node
         if (!_sawPlaying) return;
         if (_role == "emote-b") ObserveSitterFromAnotherClient();
         if (_role == "emote-late") ObserveLateJoinSnapshot();
+        if (_role == "client" && _clientName == "ClientB")
+        {
+            _voiceGlobalDelivered |= PositionalVoiceChat.Instance.GetReceivedVoicePacketCount(VoiceChannel.Global) >= 1;
+            _voiceProximityRouted |= PositionalVoiceChat.Instance.GetReceivedVoicePacketCount(VoiceChannel.Proximity) >= 1;
+        }
         foreach (var node in GetTree().GetNodesInGroup("network_physics"))
             if (node is NetworkPhysicsObject { HeldByPeer: not 0 })
             {
@@ -245,6 +259,37 @@ public partial class NetworkSmoke : Node
         if (Multiplayer.IsServer()) _ = DriveAfkProbe();
         if (_role == "emote-a") _ = DriveEmoteSitter();
         if (_role == "emote-b") _ = DriveEmoteBadIdProbe();
+    }
+
+    private async Task DriveVoiceProbe()
+    {
+        // Match-start state arrives before every peer has necessarily processed its spawn.
+        // Give the authoritative GameWorld time to populate its routing positions.
+        await ToSignal(GetTree().CreateTimer(3), SceneTreeTimer.SignalName.Timeout);
+        var codec = new OpusVoiceCodec();
+        var frame = new short[VoiceWirePolicy.FrameSamples];
+        for (var i = 0; i < frame.Length; i++) frame[i] = (short)(Math.Sin(i * 0.1) * 8_000);
+        var payload = codec.Encode(frame);
+        if (payload.Length == 0) return;
+        PositionalVoiceChat.Instance.RpcId(1, "SubmitVoice", VoiceWirePolicy.FormatVersion,
+            (int)VoiceChannel.Proximity, 0L, payload);
+        await ToSignal(GetTree().CreateTimer(0.6), SceneTreeTimer.SignalName.Timeout);
+        for (uint sequence = 1; sequence < 4; sequence++)
+        {
+            PositionalVoiceChat.Instance.RpcId(1, "SubmitVoice", VoiceWirePolicy.FormatVersion,
+                (int)VoiceChannel.Global, (long)sequence, payload);
+            await ToSignal(GetTree().CreateTimer(0.05), SceneTreeTimer.SignalName.Timeout);
+        }
+    }
+
+    private async Task MoveClientBOutsideVoiceRange()
+    {
+        await ToSignal(GetTree().CreateTimer(0.2), SceneTreeTimer.SignalName.Timeout);
+        if (FindPlayerNode(ResolvePeerIdByName("ClientB")) is { } clientB)
+            clientB.GlobalPosition = new Vector3(36, 1, 0);
+        await ToSignal(GetTree().CreateTimer(0.7), SceneTreeTimer.SignalName.Timeout);
+        if (FindPlayerNode(ResolvePeerIdByName("ClientB")) is { } resetClientB)
+            resetClientB.GlobalPosition = new Vector3(4, 1, 0);
     }
 
     private async Task SubmitInteractionAfterSpawn()
@@ -611,7 +656,8 @@ public partial class NetworkSmoke : Node
               $"appearancePanelOpenSelection={_appearancePanelOpenSelectionPassed}, " +
               $"appearancePanelTeardown={_appearancePanelTeardownPassed}, " +
               $"profilePersistence={_profilePersistencePassed}, crossSlot={_appearanceCrossSlotRefused}, " +
-              $"rateLimited={_appearanceRateLimited}");
+              $"rateLimited={_appearanceRateLimited}, voicePackets={PositionalVoiceChat.Instance.ReceivedVoicePacketCount}, " +
+              $"voiceProximity={_voiceProximityRouted}, voiceGlobal={_voiceGlobalDelivered}");
         SessionManager.Instance.DisconnectSession(false);
         GetTree().Quit(success ? 0 : 1);
     }

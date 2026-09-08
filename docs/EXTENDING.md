@@ -175,6 +175,10 @@ scene before being spawned.
 
 Increment `NetworkBuildInfo.ProtocolVersion` whenever RPC signatures or replicated payloads
 change. Clients submit their game and protocol versions before roster registration, and the
+Voice routing uses protocol 10. Clients submit opaque Opus packets; the authoritative server
+validates and routes them, while clients only decode packets received from the server. Voice uses
+16 kHz mono, 320-sample (20 ms) frames, a 512-byte payload maximum, and proximity routing at 35 m.
+Each sender is limited to 50 frames and 30 KiB per second.
 host rejects incompatible builds with a readable reason.
 
 ## Add authoritative gameplay

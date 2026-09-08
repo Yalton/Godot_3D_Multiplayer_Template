@@ -5,6 +5,11 @@ The template uses two complementary test layers.
 ## Unit tests and managed coverage
 
 `MultiplayerTemplate.Tests` is an xUnit project for deterministic policies and calculations.
+
+Voice policy tests cover wire validation, 16-kHz framing, VAD, 35-m routing, sequence handling,
+and the 50-frame/30-KiB sender limits. The multiplayer harness covers client/server lifecycle and
+headless client-service suppression; dedicated servers route voice but create no capture, decode,
+playback, or voice UI nodes.
 It currently covers:
 
 - RPC rate limiting and peer/action isolation
