@@ -124,8 +124,10 @@ public static class ProceduralAnimationLibrary
     private static Animation BuildEmotePoint()
     {
         var animation = NewAnimation(0.8f, loop: false);
+        // The character's forward/aim direction is -Z. Rotating a resting, downward arm
+        // by a positive pitch raises it into -Z; a negative pitch points behind the player.
         AddRotationTrack(animation, "upperarm.R",
-            (0f, Roll(-0.14f)), (0.2f, Pitch(-1.3f)), (0.8f, Pitch(-1.3f)));
+            (0f, Roll(-0.14f)), (0.2f, Pitch(1.3f)), (0.8f, Pitch(1.3f)));
         AddRotationTrack(animation, "spine",
             (0f, Pitch(0f)), (0.2f, Pitch(0.12f)), (0.8f, Pitch(0.12f)));
         return animation;

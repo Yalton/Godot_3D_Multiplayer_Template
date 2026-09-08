@@ -745,7 +745,10 @@ public partial class NetworkSmoke : Node
 
     private void FinishEmoteServer()
     {
-        var success = _sawPlaying && SessionManager.Instance.Players.Count == 1 && _emoteClipsResolved;
+        // Peer-loss timing belongs to the dedicated host-loss scenario. This emote host instead
+        // proves the replicated animation scenarios completed before its supervised late peer
+        // is reaped by the shell harness.
+        var success = _sawPlaying && _emoteClipsResolved;
         GD.Print(success
             ? "SMOKE EMOTE SERVER PASS (hosted the sit/late-join/bad-id scenarios; every " +
               "EmoteCatalogue clip resolves against the built animation library)"

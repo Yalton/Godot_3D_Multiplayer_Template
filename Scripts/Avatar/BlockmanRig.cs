@@ -169,8 +169,10 @@ public partial class BlockmanRig : AvatarRig
     private void BuildAttachments()
     {
         _attachments[AvatarSlot.Head] = NewMarker("head", new Vector3(0, 0.36f, 0), "Slot_Head");
-        _attachments[AvatarSlot.Back] = NewMarker("spine", new Vector3(0, 0.16f, -0.18f), "Slot_Back");
-        _attachments[AvatarSlot.Hips] = NewMarker("hips", new Vector3(0, 0f, -0.18f), "Slot_Hips");
+        // NetworkPlayer's movement and aim convention faces -Z, so back-mounted cosmetics
+        // belong on the positive-Z side of the procedural rig.
+        _attachments[AvatarSlot.Back] = NewMarker("spine", new Vector3(0, 0.16f, 0.18f), "Slot_Back");
+        _attachments[AvatarSlot.Hips] = NewMarker("hips", new Vector3(0, 0f, 0.18f), "Slot_Hips");
         _attachments[AvatarSlot.HandLeft] = NewMarker("upperarm.L", new Vector3(0, -0.52f, 0), "Slot_HandLeft");
         _attachments[AvatarSlot.HandRight] = NewMarker("upperarm.R", new Vector3(0, -0.52f, 0), "Slot_HandRight");
     }

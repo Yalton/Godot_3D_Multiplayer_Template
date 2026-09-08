@@ -66,7 +66,9 @@ public partial class RadialWheel : Control
     public override void _Draw()
     {
         if (!IsOpen || _entries.Count == 0) return;
-        var centre = Size * 0.5f;
+        // A CanvasLayer is not a Control parent, so anchors alone do not give this child
+        // a usable layout rect. Draw against the actual viewport instead.
+        var centre = GetViewport().GetVisibleRect().Size * 0.5f;
         var selected = RadialWheelMath.Select(
             _direction.X, _direction.Y, _entries.Count, RadialWheelMath.DeadZone);
         var font = GetThemeDefaultFont();
