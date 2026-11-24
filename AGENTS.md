@@ -1,0 +1,6 @@
+# 3DMultiplayerTemplate
+
+@[base](/data/fast/Projects/Tech/AI/project-conventions/base.md)
+@[game](/data/fast/Projects/Tech/AI/project-conventions/game.md)
+
+See [CLAUDE.md](CLAUDE.md) for project-specific notes and `.fleet.json` for declared types, git authority, and verify command.
